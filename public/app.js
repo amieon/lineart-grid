@@ -29,6 +29,7 @@ const dom = {
   exportLineart: el('exportLineart'),
   exportGrid: el('exportGrid'),
   exportOriginalGrid: el('exportOriginalGrid'),
+  exportGridOnly: el('exportGridOnly'),
   empty: el('empty'),
   singleView: el('singleView'),
   compareView: el('compareView'),
@@ -239,6 +240,18 @@ async function convert() {
   }
 }
 
+function downloadCanvas(canvas, name) {
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, 'image/png');
+}
+
 function exportCanvas(img, withGrid, suffix) {
   if (!img) {
     setStatus('没有可导出的图片', 'error');
@@ -247,15 +260,19 @@ function exportCanvas(img, withGrid, suffix) {
   const settings = readSettings();
   const canvas = document.createElement('canvas');
   drawScene(canvas, img, { ...settings, showGrid: withGrid });
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${state.fileName}_${suffix}${settings.n}x${settings.n}.png`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, 'image/png');
+  downloadCanvas(canvas, `${state.fileName}_${suffix}${settings.n}x${settings.n}.png`);
+}
+
+// 透明背景只留格线，打印出来垫在纸下或叠在别的图上都能用
+function exportGridOnly() {
+  const settings = readSettings();
+  const img = state.lineart || state.original;
+  const { sw, sh } = img ? cropRect(img, settings.square) : { sw: 2048, sh: 2048 };
+  const canvas = document.createElement('canvas');
+  canvas.width = sw;
+  canvas.height = sh;
+  drawGrid(canvas.getContext('2d'), sw, sh, settings);
+  downloadCanvas(canvas, `${state.fileName}_空白网格_${settings.n}x${settings.n}.png`);
 }
 
 dom.dropzone.addEventListener('click', () => dom.fileInput.click());
@@ -298,6 +315,7 @@ for (const input of [dom.gridN, dom.showGrid, dom.showLabels, dom.gridColor, dom
 dom.exportLineart.addEventListener('click', () => exportCanvas(state.lineart, false, '线稿_'));
 dom.exportGrid.addEventListener('click', () => exportCanvas(state.lineart || state.original, true, '线稿带格_'));
 dom.exportOriginalGrid.addEventListener('click', () => exportCanvas(state.original, true, '原图带格_'));
+dom.exportGridOnly.addEventListener('click', exportGridOnly);
 
 fetch('/api/config')
   .then((r) => r.json())
