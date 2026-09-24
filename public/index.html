@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>线稿临摹网格工具</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="topbar">
+  <h1>线稿临摹网格工具</h1>
+  <p class="subtitle">图片 → Qwen 转黑白线稿 → 叠 n×n 方格练型准</p>
+  <span id="modelBadge" class="badge">未连接</span>
+</header>
+
+<main class="layout">
+  <aside class="panel">
+    <section class="group">
+      <h2>1. 图片</h2>
+      <div id="dropzone" class="dropzone">
+        <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/bmp" hidden />
+        <p><strong>点击选择</strong> 或把图片拖进来</p>
+        <p class="hint">png / jpg / webp，建议长边 ≤ 2048px</p>
+      </div>
+      <p id="fileInfo" class="hint"></p>
+    </section>
+
+    <section class="group">
+      <h2>2. 转线稿</h2>
+      <label class="field">
+        <span>提示词</span>
+        <textarea id="prompt" rows="5"></textarea>
+      </label>
+      <label class="field">
+        <span>反向提示词</span>
+        <textarea id="negativePrompt" rows="2"></textarea>
+      </label>
+      <div class="row">
+        <button id="resetPrompt" class="btn ghost" type="button">恢复默认提示词</button>
+        <button id="convertBtn" class="btn primary" type="button">生成线稿</button>
+      </div>
+      <p id="status" class="hint status"></p>
+    </section>
+
+    <section class="group">
+      <h2>3. 网格</h2>
+      <label class="field">
+        <span>显示内容</span>
+        <select id="mode">
+          <option value="lineart">线稿</option>
+          <option value="original">原图</option>
+          <option value="compare">左右对比</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>格数 n × n：<b id="nValue">4</b></span>
+        <input id="gridN" type="range" min="2" max="20" step="1" value="4" />
+      </label>
+      <div class="row">
+        <label class="check"><input id="showGrid" type="checkbox" checked /> 显示网格</label>
+        <label class="check"><input id="showLabels" type="checkbox" /> 显示格号</label>
+      </div>
+      <div class="row">
+        <label class="field small">
+          <span>线色</span>
+          <input id="gridColor" type="color" value="#e8433f" />
+        </label>
+        <label class="field small">
+          <span>粗细 <b id="widthValue">1.5</b></span>
+          <input id="gridWidth" type="range" min="0.5" max="6" step="0.5" value="1.5" />
+        </label>
+        <label class="field small">
+          <span>不透明 <b id="opacityValue">90%</b></span>
+          <input id="gridOpacity" type="range" min="10" max="100" step="5" value="90" />
+        </label>
+      </div>
+      <label class="check"><input id="squareCells" type="checkbox" /> 强制正方形格（裁掉多余部分）</label>
+    </section>
+
+    <section class="group">
+      <h2>4. 导出</h2>
+      <div class="row wrap">
+        <button id="exportLineart" class="btn" type="button">导出线稿</button>
+        <button id="exportGrid" class="btn" type="button">导出线稿+网格</button>
+        <button id="exportOriginalGrid" class="btn" type="button">导出原图+网格</button>
+      </div>
+      <p class="hint">导出为 PNG，尺寸与原图一致，可直接打印。</p>
+    </section>
+  </aside>
+
+  <section class="stage">
+    <div id="empty" class="empty">
+      <p>先放一张图进来吧</p>
+      <p class="hint">没有 API key 也能用：把已有的线稿图拖进来，直接叠格子</p>
+    </div>
+    <div id="singleView" class="view" hidden>
+      <canvas id="mainCanvas"></canvas>
+    </div>
+    <div id="compareView" class="view compare" hidden>
+      <figure><canvas id="leftCanvas"></canvas><figcaption>原图</figcaption></figure>
+      <figure><canvas id="rightCanvas"></canvas><figcaption>线稿</figcaption></figure>
+    </div>
+    <div id="loading" class="loading" hidden><div class="spinner"></div><span>模型正在画线稿，通常 10~40 秒…</span></div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

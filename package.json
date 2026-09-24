@@ -1,0 +1,13 @@
+{
+  "name": "lineart-grid",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "把图片转成黑白线稿并叠加 n×n 临摹网格",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
