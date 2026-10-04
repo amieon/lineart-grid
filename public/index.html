@@ -56,7 +56,7 @@
     </section>
 
     <section class="group">
-      <h2>2. 转线稿</h2>
+      <h2>2. 生成线稿 <span class="tag money">唯一花钱的一步</span></h2>
       <label class="field">
         <span>提示词</span>
         <textarea id="prompt" rows="5"></textarea>
@@ -69,21 +69,57 @@
         <button id="resetPrompt" class="btn ghost" type="button">恢复默认提示词</button>
         <button id="convertBtn" class="btn primary" type="button">生成线稿</button>
       </div>
-      <div class="row">
-        <label class="check"><input id="sharpen" type="checkbox" checked /> 线条锐化（2× 放大 + 二值化，只作用于线稿）</label>
-      </div>
-      <div class="row">
-        <label class="check"><input id="denoise" type="checkbox" checked /> 中值滤波去噪点（3×3，保边去孤立杂点）</label>
-      </div>
-      <label class="field small">
-        <span>二值化阈值 <b id="sharpenValue">140</b>（越大保留越多淡线）</span>
-        <input id="sharpenThreshold" type="range" min="60" max="220" step="5" value="140" />
-      </label>
       <p id="status" class="hint status"></p>
     </section>
 
     <section class="group">
-      <h2>3. 网格</h2>
+      <h2>3. 图像处理 <span class="tag free">本地 · 免费 · 可反复</span></h2>
+      <p class="hint">下面全在浏览器本地跑，不调模型、不花钱。生成一次线稿后可反复调参、点「应用处理」。</p>
+      <label class="check"><input id="trim" type="checkbox" /> 自动裁掉四周空白（治模型爱加的大白边）</label>
+      <label class="field small">
+        <span>留白容差 <b id="trimValue">12</b>（越大裁得越狠）</span>
+        <input id="trimTol" type="range" min="2" max="60" step="2" value="12" />
+      </label>
+      <div class="row wrap">
+        <label class="check"><input id="denoise" type="checkbox" checked /> 中值去噪</label>
+        <label class="field small">
+          <span>核</span>
+          <select id="medianK">
+            <option value="3">3×3</option>
+            <option value="5">5×5</option>
+          </select>
+        </label>
+      </div>
+      <label class="check"><input id="binarize" type="checkbox" checked /> 色阶二值化（拉黑边缘）</label>
+      <label class="field small">
+        <span>二值化阈值 <b id="sharpenValue">140</b>（越大保留越多淡线）</span>
+        <input id="sharpenThreshold" type="range" min="60" max="220" step="5" value="140" />
+      </label>
+      <div class="row wrap">
+        <label class="field small">
+          <span>形态学</span>
+          <select id="morph">
+            <option value="none">无</option>
+            <option value="dilate">膨胀（加粗 / 连断线）</option>
+            <option value="erode">腐蚀（变细 / 去杂点）</option>
+          </select>
+        </label>
+        <label class="field small">
+          <span>放大</span>
+          <select id="upscale">
+            <option value="1">原始</option>
+            <option value="2">2×（打印更锐）</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <button id="resetProc" class="btn ghost" type="button">清除处理（看原图）</button>
+        <button id="processBtn" class="btn primary" type="button">应用处理</button>
+      </div>
+    </section>
+
+    <section class="group">
+      <h2>4. 网格</h2>
       <label class="field">
         <span>显示内容</span>
         <select id="mode">
@@ -118,7 +154,7 @@
     </section>
 
     <section class="group">
-      <h2>4. 导出</h2>
+      <h2>5. 导出</h2>
       <div class="row wrap">
         <button id="exportGridOnly" class="btn primary" type="button">导出空白网格</button>
         <button id="exportLineart" class="btn" type="button">导出线稿</button>

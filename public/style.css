@@ -44,6 +44,18 @@ body {
 .badge.ok { color: #7ee08a; border-color: #2f5c37; }
 .badge.bad { color: #ff9a95; border-color: #6b3230; }
 
+.tag {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.tag.money { color: #ffc06b; background: #4a3416; }
+.tag.free { color: #7ee08a; background: #1f3d24; }
+
 .modal {
   position: fixed;
   inset: 0;

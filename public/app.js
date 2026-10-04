@@ -14,10 +14,18 @@ const dom = {
   negativePrompt: el('negativePrompt'),
   resetPrompt: el('resetPrompt'),
   convertBtn: el('convertBtn'),
-  sharpen: el('sharpen'),
+  trim: el('trim'),
+  trimTol: el('trimTol'),
+  trimValue: el('trimValue'),
   denoise: el('denoise'),
+  medianK: el('medianK'),
+  binarize: el('binarize'),
   sharpenThreshold: el('sharpenThreshold'),
   sharpenValue: el('sharpenValue'),
+  morph: el('morph'),
+  upscale: el('upscale'),
+  processBtn: el('processBtn'),
+  resetProc: el('resetProc'),
   status: el('status'),
   mode: el('mode'),
   gridN: el('gridN'),
@@ -92,94 +100,191 @@ function cropRect(img, square) {
   return { sx: Math.round((w - side) / 2), sy: Math.round((h - side) / 2), sw: side, sh: side };
 }
 
-// 3×3 中值滤波（顺序统计滤波器）：在灰度通道上做，保边去孤立噪点。
-// 复用一个 9 元素缓冲，避免每像素分配；边界用钳制坐标。
-function median3x3(imageData, w, h) {
-  const d = imageData.data;
-  const g = new Uint8ClampedArray(w * h);
-  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
-    g[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-  }
-  const buf = new Uint8ClampedArray(9);
-  for (let y = 0; y < h; y++) {
-    const y0 = y > 0 ? y - 1 : 0;
-    const y1 = y;
-    const y2 = y < h - 1 ? y + 1 : h - 1;
-    for (let x = 0; x < w; x++) {
-      const x0 = x > 0 ? x - 1 : 0;
-      const x1 = x;
-      const x2 = x < w - 1 ? x + 1 : w - 1;
-      buf[0] = g[y0 * w + x0]; buf[1] = g[y0 * w + x1]; buf[2] = g[y0 * w + x2];
-      buf[3] = g[y1 * w + x0]; buf[4] = g[y1 * w + x1]; buf[5] = g[y1 * w + x2];
-      buf[6] = g[y2 * w + x0]; buf[7] = g[y2 * w + x1]; buf[8] = g[y2 * w + x2];
-      buf.sort();
-      const m = buf[4];
-      const o = (y * w + x) * 4;
-      d[o] = m; d[o + 1] = m; d[o + 2] = m;
-    }
-  }
-}
+// ---------- 本地图像处理管线（不调模型，免费、可反复） ----------
+// 每个滤波器是独立小函数，加新滤波器 = 一个函数 + 一个控件。
+// 顺序：原尺寸 → 中值去噪 → 裁白边 → 放大 → 色阶二值化 → 形态学。
+// 中值(带排序、最贵)放在放大前的小尺寸上做，且在裁边前（先把杂点去掉才裁得干净）；放大后二值化=带抗锯齿。
 
-// 色阶二值化：把 [lo, lo+range] 的灰度用一条陡斜线拉开到 0/255
-function applyLevels(srcCanvas, threshold) {
+function canvasOf(img, scale = 1) {
+  const { w, h } = dims(img);
   const canvas = document.createElement('canvas');
-  canvas.width = srcCanvas.width;
-  canvas.height = srcCanvas.height;
+  canvas.width = Math.max(1, Math.round(w * scale));
+  canvas.height = Math.max(1, Math.round(h * scale));
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(srcCanvas, 0, 0);
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const d = imageData.data;
-  const soft = 45;
-  const lo = threshold - soft;
-  const range = soft * 2;
-  for (let i = 0; i < d.length; i += 4) {
-    const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    let v = ((lum - lo) * 255) / range;
-    v = v < 0 ? 0 : v > 255 ? 255 : v;
-    d[i] = v; d[i + 1] = v; d[i + 2] = v;
-  }
-  ctx.putImageData(imageData, 0, 0);
+  ctx.imageSmoothingEnabled = scale !== 1;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   return canvas;
 }
 
-// 中值去噪 + 2× 放大后的“基图”，与阈值无关，缓存起来避免拖滑块时反复重算
-let baseCache = { src: null, denoise: null, canvas: null };
-
-function prepareBase() {
-  const src = state.lineart;
-  const denoise = dom.denoise.checked;
-  if (baseCache.src === src && baseCache.denoise === denoise && baseCache.canvas) {
-    return baseCache.canvas;
+function toGray(id) {
+  const d = id.data;
+  const g = new Uint8ClampedArray(d.length >> 2);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    g[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
   }
-  const { w: w0, h: h0 } = dims(src);
-  // 1) 源分辨率下做中值滤波（去噪不放大噪点，也省算力）
-  const base = document.createElement('canvas');
-  base.width = w0;
-  base.height = h0;
-  const bctx = base.getContext('2d');
-  bctx.drawImage(src, 0, 0);
-  if (denoise) {
-    const id = bctx.getImageData(0, 0, w0, h0);
-    median3x3(id, w0, h0);
-    bctx.putImageData(id, 0, 0);
-  }
-  // 2) 2× 高质量放大，制造平滑灰边供阈值卡
-  const up = document.createElement('canvas');
-  up.width = w0 * 2;
-  up.height = h0 * 2;
-  const uctx = up.getContext('2d');
-  uctx.imageSmoothingEnabled = true;
-  uctx.imageSmoothingQuality = 'high';
-  uctx.drawImage(base, 0, 0, up.width, up.height);
-  baseCache = { src, denoise, canvas: up };
-  return up;
+  return g;
 }
 
-// 线稿是二值信息：中值去噪 → 2× 放大 → 色阶二值化，打印接近矢量的锐利度
+function writeGrayBack(id, g) {
+  const d = id.data;
+  for (let p = 0, i = 0; p < g.length; p++, i += 4) {
+    d[i] = g[p]; d[i + 1] = g[p]; d[i + 2] = g[p]; d[i + 3] = 255;
+  }
+}
+
+// 中值滤波：顺序统计、保边去椒盐噪点。k = 3 或 5（奇数）
+function medianFilter(g, w, h, k) {
+  const out = new Uint8ClampedArray(g.length);
+  const r = (k - 1) >> 1;
+  const size = k * k;
+  const mid = size >> 1;
+  const buf = new Uint8ClampedArray(size);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let n = 0;
+      for (let dy = -r; dy <= r; dy++) {
+        const yy = y + dy < 0 ? 0 : y + dy >= h ? h - 1 : y + dy;
+        for (let dx = -r; dx <= r; dx++) {
+          const xx = x + dx < 0 ? 0 : x + dx >= w ? w - 1 : x + dx;
+          buf[n++] = g[yy * w + xx];
+        }
+      }
+      buf.sort();
+      out[y * w + x] = buf[mid];
+    }
+  }
+  return out;
+}
+
+// 形态学（灰度）：dilate=邻域取 min → 黑线扩张/连断裂；erode=取 max → 黑线收缩/去杂点
+function morphFilter(g, w, h, mode) {
+  const out = new Uint8ClampedArray(g.length);
+  for (let y = 0; y < h; y++) {
+    const y0 = (y > 0 ? y - 1 : 0) * w, y1 = y * w, y2 = (y < h - 1 ? y + 1 : h - 1) * w;
+    for (let x = 0; x < w; x++) {
+      const x0 = x > 0 ? x - 1 : 0, x1 = x, x2 = x < w - 1 ? x + 1 : w - 1;
+      let v = g[y0 + x0];
+      if (mode === 'dilate') {
+        if (g[y0 + x1] < v) v = g[y0 + x1];
+        if (g[y0 + x2] < v) v = g[y0 + x2];
+        if (g[y1 + x0] < v) v = g[y1 + x0];
+        if (g[y1 + x1] < v) v = g[y1 + x1];
+        if (g[y1 + x2] < v) v = g[y1 + x2];
+        if (g[y2 + x0] < v) v = g[y2 + x0];
+        if (g[y2 + x1] < v) v = g[y2 + x1];
+        if (g[y2 + x2] < v) v = g[y2 + x2];
+      } else {
+        if (g[y0 + x1] > v) v = g[y0 + x1];
+        if (g[y0 + x2] > v) v = g[y0 + x2];
+        if (g[y1 + x0] > v) v = g[y1 + x0];
+        if (g[y1 + x1] > v) v = g[y1 + x1];
+        if (g[y1 + x2] > v) v = g[y1 + x2];
+        if (g[y2 + x0] > v) v = g[y2 + x0];
+        if (g[y2 + x1] > v) v = g[y2 + x1];
+        if (g[y2 + x2] > v) v = g[y2 + x2];
+      }
+      out[y * w + x] = v;
+    }
+  }
+  return out;
+}
+
+function upscaleCanvas(canvas, scale) {
+  if (scale === 1) return canvas;
+  const out = document.createElement('canvas');
+  out.width = canvas.width * scale;
+  out.height = canvas.height * scale;
+  const ctx = out.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(canvas, 0, 0, out.width, out.height);
+  return out;
+}
+
+// 自动裁白边：找非白内容的包围盒（治 Qwen 上下加的大白边）
+function trimCanvas(canvas, tol) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  const g = toGray(ctx.getImageData(0, 0, w, h));
+  const limit = 255 - tol;
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      if (g[row + x] < limit) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return canvas;
+  const padX = Math.round((maxX - minX + 1) * 0.02) + 4;
+  const padY = Math.round((maxY - minY + 1) * 0.02) + 4;
+  minX = Math.max(0, minX - padX);
+  minY = Math.max(0, minY - padY);
+  maxX = Math.min(w - 1, maxX + padX);
+  maxY = Math.min(h - 1, maxY + padY);
+  const cw = maxX - minX + 1;
+  const ch = maxY - minY + 1;
+  const out = document.createElement('canvas');
+  out.width = cw;
+  out.height = ch;
+  out.getContext('2d').drawImage(canvas, minX, minY, cw, ch, 0, 0, cw, ch);
+  return out;
+}
+
+function readPipeline() {
+  return {
+    trim: dom.trim.checked,
+    trimTol: Number(dom.trimTol.value),
+    denoise: dom.denoise.checked,
+    medianK: Number(dom.medianK.value),
+    binarize: dom.binarize.checked,
+    threshold: Number(dom.sharpenThreshold.value),
+    morph: dom.morph.value,
+    upscale: Number(dom.upscale.value),
+  };
+}
+
+// 跑整条管线，结果存进 state.lineartProc；不碰模型、不花钱
 function buildProcessedLineart() {
   state.lineartProc = null;
-  if (!state.lineart || !dom.sharpen.checked) return;
-  state.lineartProc = applyLevels(prepareBase(), Number(dom.sharpenThreshold.value));
+  const src = state.lineart || state.original;
+  if (!src) return false;
+  const s = readPipeline();
+  let canvas = canvasOf(src, 1);
+  // 先去噪再裁边：否则靠近边缘的杂点会把包围盒撑大，裁不掉
+  if (s.denoise) {
+    const dctx = canvas.getContext('2d');
+    const did = dctx.getImageData(0, 0, canvas.width, canvas.height);
+    writeGrayBack(did, medianFilter(toGray(did), canvas.width, canvas.height, s.medianK));
+    dctx.putImageData(did, 0, 0);
+  }
+  if (s.trim) canvas = trimCanvas(canvas, s.trimTol);
+  canvas = upscaleCanvas(canvas, s.upscale);
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  const id = ctx.getImageData(0, 0, w, h);
+  let g = toGray(id);
+  if (s.binarize) {
+    const soft = 45;
+    const lo = s.threshold - soft;
+    const range = soft * 2;
+    for (let p = 0; p < g.length; p++) {
+      let v = ((g[p] - lo) * 255) / range;
+      g[p] = v < 0 ? 0 : v > 255 ? 255 : v;
+    }
+  }
+  if (s.morph !== 'none') g = morphFilter(g, w, h, s.morph);
+  writeGrayBack(id, g);
+  ctx.putImageData(id, 0, 0);
+  state.lineartProc = canvas;
+  return true;
 }
 
 function lineartImg() {
@@ -361,9 +466,12 @@ async function convert() {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
     state.lineart = await loadImage(data.image);
-    buildProcessedLineart();
+    state.lineartProc = null;
     dom.mode.value = 'lineart';
-    setStatus(`线稿已生成，用时 ${((Date.now() - started) / 1000).toFixed(1)} 秒`, 'ok');
+    setStatus(
+      `线稿已生成（原始，未处理），用时 ${((Date.now() - started) / 1000).toFixed(1)} 秒。现在到第 3 组挑滤波器，点「应用处理」是本地免费的，可反复调。`,
+      'ok'
+    );
     render();
   } catch (err) {
     setStatus(err.message || '生成失败', 'error');
@@ -450,22 +558,38 @@ dom.exportGrid.addEventListener('click', () => exportCanvas(lineartImg() || stat
 dom.exportOriginalGrid.addEventListener('click', () => exportCanvas(state.original, true, '原图带格_'));
 dom.exportGridOnly.addEventListener('click', exportGridOnly);
 
-let sharpenTimer = null;
-dom.sharpen.addEventListener('change', () => {
-  buildProcessedLineart();
-  render();
-});
-dom.denoise.addEventListener('change', () => {
-  buildProcessedLineart();
-  render();
-});
+// 滤波器控件只更新数字标签；真正生效靠「应用处理」按钮（本地免费，可反复）
 dom.sharpenThreshold.addEventListener('input', () => {
   dom.sharpenValue.textContent = dom.sharpenThreshold.value;
-  clearTimeout(sharpenTimer);
-  sharpenTimer = setTimeout(() => {
-    buildProcessedLineart();
-    render();
-  }, 120);
+});
+dom.trimTol.addEventListener('input', () => {
+  dom.trimValue.textContent = dom.trimTol.value;
+});
+
+dom.processBtn.addEventListener('click', () => {
+  if (!state.lineart && !state.original) {
+    setStatus('先载入图片或生成线稿，再应用处理', 'error');
+    return;
+  }
+  dom.processBtn.disabled = true;
+  setStatus('本地处理中…（不调模型，不花钱）');
+  // 让“处理中”先绘制一帧再跑（中值滤波可能几百毫秒）
+  setTimeout(() => {
+    const ok = buildProcessedLineart();
+    dom.processBtn.disabled = false;
+    if (ok) {
+      dom.mode.value = 'lineart';
+      render();
+      const d = state.lineartProc;
+      setStatus(`处理完成（${d.width}×${d.height}，本地免费）。不满意可改参数再点一次。`, 'ok');
+    }
+  }, 30);
+});
+
+dom.resetProc.addEventListener('click', () => {
+  state.lineartProc = null;
+  render();
+  setStatus('已清除处理结果，显示未处理的原始线稿。', 'ok');
 });
 
 let lastConfig = null;
