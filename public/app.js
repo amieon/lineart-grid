@@ -15,6 +15,7 @@ const dom = {
   resetPrompt: el('resetPrompt'),
   convertBtn: el('convertBtn'),
   sharpen: el('sharpen'),
+  denoise: el('denoise'),
   sharpenThreshold: el('sharpenThreshold'),
   sharpenValue: el('sharpenValue'),
   status: el('status'),
@@ -91,38 +92,94 @@ function cropRect(img, square) {
   return { sx: Math.round((w - side) / 2), sy: Math.round((h - side) / 2), sw: side, sh: side };
 }
 
-// 线稿是二值信息：先高质量放大 2 倍，再用色阶把灰边推成纯黑/纯白，
-// 打印出来接近矢量的锐利度
-function buildProcessedLineart() {
-  state.lineartProc = null;
-  if (!state.lineart || !dom.sharpen.checked) return;
-  const src = state.lineart;
-  const { w: w0, h: h0 } = dims(src);
-  const w = w0 * 2;
-  const h = h0 * 2;
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(src, 0, 0, w, h);
-  const imageData = ctx.getImageData(0, 0, w, h);
+// 3×3 中值滤波（顺序统计滤波器）：在灰度通道上做，保边去孤立噪点。
+// 复用一个 9 元素缓冲，避免每像素分配；边界用钳制坐标。
+function median3x3(imageData, w, h) {
   const d = imageData.data;
-  const t = Number(dom.sharpenThreshold.value);
+  const g = new Uint8ClampedArray(w * h);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    g[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  }
+  const buf = new Uint8ClampedArray(9);
+  for (let y = 0; y < h; y++) {
+    const y0 = y > 0 ? y - 1 : 0;
+    const y1 = y;
+    const y2 = y < h - 1 ? y + 1 : h - 1;
+    for (let x = 0; x < w; x++) {
+      const x0 = x > 0 ? x - 1 : 0;
+      const x1 = x;
+      const x2 = x < w - 1 ? x + 1 : w - 1;
+      buf[0] = g[y0 * w + x0]; buf[1] = g[y0 * w + x1]; buf[2] = g[y0 * w + x2];
+      buf[3] = g[y1 * w + x0]; buf[4] = g[y1 * w + x1]; buf[5] = g[y1 * w + x2];
+      buf[6] = g[y2 * w + x0]; buf[7] = g[y2 * w + x1]; buf[8] = g[y2 * w + x2];
+      buf.sort();
+      const m = buf[4];
+      const o = (y * w + x) * 4;
+      d[o] = m; d[o + 1] = m; d[o + 2] = m;
+    }
+  }
+}
+
+// 色阶二值化：把 [lo, lo+range] 的灰度用一条陡斜线拉开到 0/255
+function applyLevels(srcCanvas, threshold) {
+  const canvas = document.createElement('canvas');
+  canvas.width = srcCanvas.width;
+  canvas.height = srcCanvas.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(srcCanvas, 0, 0);
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imageData.data;
   const soft = 45;
-  const lo = t - soft;
+  const lo = threshold - soft;
   const range = soft * 2;
   for (let i = 0; i < d.length; i += 4) {
     const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
     let v = ((lum - lo) * 255) / range;
     v = v < 0 ? 0 : v > 255 ? 255 : v;
-    d[i] = v;
-    d[i + 1] = v;
-    d[i + 2] = v;
+    d[i] = v; d[i + 1] = v; d[i + 2] = v;
   }
   ctx.putImageData(imageData, 0, 0);
-  state.lineartProc = canvas;
+  return canvas;
+}
+
+// 中值去噪 + 2× 放大后的“基图”，与阈值无关，缓存起来避免拖滑块时反复重算
+let baseCache = { src: null, denoise: null, canvas: null };
+
+function prepareBase() {
+  const src = state.lineart;
+  const denoise = dom.denoise.checked;
+  if (baseCache.src === src && baseCache.denoise === denoise && baseCache.canvas) {
+    return baseCache.canvas;
+  }
+  const { w: w0, h: h0 } = dims(src);
+  // 1) 源分辨率下做中值滤波（去噪不放大噪点，也省算力）
+  const base = document.createElement('canvas');
+  base.width = w0;
+  base.height = h0;
+  const bctx = base.getContext('2d');
+  bctx.drawImage(src, 0, 0);
+  if (denoise) {
+    const id = bctx.getImageData(0, 0, w0, h0);
+    median3x3(id, w0, h0);
+    bctx.putImageData(id, 0, 0);
+  }
+  // 2) 2× 高质量放大，制造平滑灰边供阈值卡
+  const up = document.createElement('canvas');
+  up.width = w0 * 2;
+  up.height = h0 * 2;
+  const uctx = up.getContext('2d');
+  uctx.imageSmoothingEnabled = true;
+  uctx.imageSmoothingQuality = 'high';
+  uctx.drawImage(base, 0, 0, up.width, up.height);
+  baseCache = { src, denoise, canvas: up };
+  return up;
+}
+
+// 线稿是二值信息：中值去噪 → 2× 放大 → 色阶二值化，打印接近矢量的锐利度
+function buildProcessedLineart() {
+  state.lineartProc = null;
+  if (!state.lineart || !dom.sharpen.checked) return;
+  state.lineartProc = applyLevels(prepareBase(), Number(dom.sharpenThreshold.value));
 }
 
 function lineartImg() {
@@ -395,6 +452,10 @@ dom.exportGridOnly.addEventListener('click', exportGridOnly);
 
 let sharpenTimer = null;
 dom.sharpen.addEventListener('change', () => {
+  buildProcessedLineart();
+  render();
+});
+dom.denoise.addEventListener('change', () => {
   buildProcessedLineart();
   render();
 });
