@@ -75,6 +75,17 @@
     <section class="group">
       <h2>3. 图像处理 <span class="tag free">本地 · 免费 · 可反复</span></h2>
       <p class="hint">下面全在浏览器本地跑，不调模型、不花钱。生成一次线稿后可反复调参、点「应用处理」。</p>
+      <label class="field small">
+        <span>空间卷积核（3×3）</span>
+        <select id="convKernel">
+          <option value="none">无</option>
+          <option value="gaussian">高斯模糊（线性平滑·会糊边）</option>
+          <option value="box">均值滤波（线性平滑）</option>
+          <option value="sharpen">锐化核（中心 5，边缘增强）</option>
+          <option value="laplacian">拉普拉斯（二阶导边缘图）</option>
+          <option value="sobel">Sobel（一阶梯度边缘图）</option>
+        </select>
+      </label>
       <label class="check"><input id="trim" type="checkbox" /> 自动裁掉四周空白（治模型爱加的大白边）</label>
       <label class="field small">
         <span>留白容差 <b id="trimValue">12</b>（越大裁得越狠）</span>
@@ -102,6 +113,8 @@
             <option value="none">无</option>
             <option value="dilate">膨胀（加粗 / 连断线）</option>
             <option value="erode">腐蚀（变细 / 去杂点）</option>
+            <option value="open">开运算（腐蚀→膨胀，去黑杂点）</option>
+            <option value="close">闭运算（膨胀→腐蚀，补断线小孔）</option>
           </select>
         </label>
         <label class="field small">

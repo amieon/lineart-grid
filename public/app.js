@@ -14,6 +14,7 @@ const dom = {
   negativePrompt: el('negativePrompt'),
   resetPrompt: el('resetPrompt'),
   convertBtn: el('convertBtn'),
+  convKernel: el('convKernel'),
   trim: el('trim'),
   trimTol: el('trimTol'),
   trimValue: el('trimValue'),
@@ -190,6 +191,76 @@ function morphFilter(g, w, h, mode) {
   return out;
 }
 
+// 通用 3×3 线性卷积（钳制边界）：out = Σ k·g / div + off
+function convolve3(g, w, h, k, div, off) {
+  const out = new Uint8ClampedArray(g.length);
+  for (let y = 0; y < h; y++) {
+    const ym = (y > 0 ? y - 1 : 0) * w, yc = y * w, yp = (y < h - 1 ? y + 1 : h - 1) * w;
+    for (let x = 0; x < w; x++) {
+      const xm = x > 0 ? x - 1 : 0, xp = x < w - 1 ? x + 1 : w - 1;
+      const s =
+        k[0] * g[ym + xm] + k[1] * g[ym + x] + k[2] * g[ym + xp] +
+        k[3] * g[yc + xm] + k[4] * g[yc + x] + k[5] * g[yc + xp] +
+        k[6] * g[yp + xm] + k[7] * g[yp + x] + k[8] * g[yp + xp];
+      const v = s / div + off;
+      out[y * w + x] = v < 0 ? 0 : v > 255 ? 255 : v;
+    }
+  }
+  return out;
+}
+
+// Sobel：Gx/Gy 两个核对称差分算子，梯度幅值 |∇| = √(Gx²+Gy²)。
+// 这里把强边缘映射成“暗线在亮底上”，跟线稿约定一致。
+function sobel(g, w, h) {
+  const out = new Uint8ClampedArray(g.length);
+  const gx = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
+  const gy = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
+  for (let y = 0; y < h; y++) {
+    const ym = (y > 0 ? y - 1 : 0) * w, yc = y * w, yp = (y < h - 1 ? y + 1 : h - 1) * w;
+    for (let x = 0; x < w; x++) {
+      const xm = x > 0 ? x - 1 : 0, xp = x < w - 1 ? x + 1 : w - 1;
+      const a = g[ym + xm], b = g[ym + x], c = g[ym + xp];
+      const d = g[yc + xm], e = g[yc + x], f = g[yc + xp];
+      const p = g[yp + xm], q = g[yp + x], r = g[yp + xp];
+      const sx = (c + 2 * f + r) - (a + 2 * d + p);
+      const sy = (p + 2 * q + r) - (a + 2 * b + c);
+      const mag = Math.sqrt(sx * sx + sy * sy);
+      const v = 255 - mag;
+      out[y * w + x] = v < 0 ? 0 : v > 255 ? 255 : v;
+    }
+  }
+  return out;
+}
+
+// 拉普拉斯（各向同性 8 邻域，中心 -8）：二阶导数边缘图，同样映射成暗线
+function laplacian(g, w, h) {
+  const out = new Uint8ClampedArray(g.length);
+  for (let y = 0; y < h; y++) {
+    const ym = (y > 0 ? y - 1 : 0) * w, yc = y * w, yp = (y < h - 1 ? y + 1 : h - 1) * w;
+    for (let x = 0; x < w; x++) {
+      const xm = x > 0 ? x - 1 : 0, xp = x < w - 1 ? x + 1 : w - 1;
+      const lap =
+        g[ym + xm] + g[ym + x] + g[ym + xp] +
+        g[yc + xm] - 8 * g[yc + x] + g[yc + xp] +
+        g[yp + xm] + g[yp + x] + g[yp + xp];
+      const v = 255 - Math.abs(lap);
+      out[y * w + x] = v < 0 ? 0 : v > 255 ? 255 : v;
+    }
+  }
+  return out;
+}
+
+function applyConv(g, w, h, kernel) {
+  switch (kernel) {
+    case 'gaussian': return convolve3(g, w, h, [1, 2, 1, 2, 4, 2, 1, 2, 1], 16, 0);
+    case 'box': return convolve3(g, w, h, [1, 1, 1, 1, 1, 1, 1, 1, 1], 9, 0);
+    case 'sharpen': return convolve3(g, w, h, [0, -1, 0, -1, 5, -1, 0, -1, 0], 1, 0);
+    case 'sobel': return sobel(g, w, h);
+    case 'laplacian': return laplacian(g, w, h);
+    default: return g;
+  }
+}
+
 function upscaleCanvas(canvas, scale) {
   if (scale === 1) return canvas;
   const out = document.createElement('canvas');
@@ -239,6 +310,7 @@ function trimCanvas(canvas, tol) {
 
 function readPipeline() {
   return {
+    convKernel: dom.convKernel.value,
     trim: dom.trim.checked,
     trimTol: Number(dom.trimTol.value),
     denoise: dom.denoise.checked,
@@ -257,6 +329,13 @@ function buildProcessedLineart() {
   if (!src) return false;
   const s = readPipeline();
   let canvas = canvasOf(src, 1);
+  // 空间卷积核放在最前（源尺寸、灰度），后面各步在它的结果上继续
+  if (s.convKernel !== 'none') {
+    const cctx = canvas.getContext('2d');
+    const cid = cctx.getImageData(0, 0, canvas.width, canvas.height);
+    writeGrayBack(cid, applyConv(toGray(cid), canvas.width, canvas.height, s.convKernel));
+    cctx.putImageData(cid, 0, 0);
+  }
   // 先去噪再裁边：否则靠近边缘的杂点会把包围盒撑大，裁不掉
   if (s.denoise) {
     const dctx = canvas.getContext('2d');
@@ -280,7 +359,13 @@ function buildProcessedLineart() {
       g[p] = v < 0 ? 0 : v > 255 ? 255 : v;
     }
   }
-  if (s.morph !== 'none') g = morphFilter(g, w, h, s.morph);
+  if (s.morph === 'open') {
+    g = morphFilter(morphFilter(g, w, h, 'erode'), w, h, 'dilate');
+  } else if (s.morph === 'close') {
+    g = morphFilter(morphFilter(g, w, h, 'dilate'), w, h, 'erode');
+  } else if (s.morph !== 'none') {
+    g = morphFilter(g, w, h, s.morph);
+  }
   writeGrayBack(id, g);
   ctx.putImageData(id, 0, 0);
   state.lineartProc = canvas;
