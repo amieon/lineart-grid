@@ -139,42 +139,54 @@ function pickImageUrl(payload) {
   return typeof direct === 'string' ? direct : null;
 }
 
-async function toLineart({ image, prompt, negativePrompt }) {
+async function toLineart({ image, prompt, negativePrompt, size }) {
   if (!CONFIG.apiKey || CONFIG.apiKey.includes('xxxxxxxx')) {
     throw Object.assign(new Error('还没有配置 DASHSCOPE_API_KEY，请复制 .env.example 为 .env 并填入你的 key'), {
       status: 400,
     });
   }
 
-  const body = {
-    model: CONFIG.model,
-    input: {
-      messages: [
-        {
-          role: 'user',
-          content: [{ image }, { text: prompt }],
-        },
-      ],
-    },
-    parameters: {
-      n: 1,
-      prompt_extend: CONFIG.promptExtend,
-      watermark: false,
-    },
+  const makeBody = (withSize) => {
+    const body = {
+      model: CONFIG.model,
+      input: {
+        messages: [
+          {
+            role: 'user',
+            content: [{ image }, { text: prompt }],
+          },
+        ],
+      },
+      parameters: {
+        n: 1,
+        prompt_extend: CONFIG.promptExtend,
+        watermark: false,
+      },
+    };
+    if (negativePrompt) body.parameters.negative_prompt = negativePrompt;
+    // 请求按输入比例出大图，避免模型默认低分辨率导致线稿发糊
+    if (withSize && size) body.parameters.size = size;
+    return body;
   };
-  if (negativePrompt) body.parameters.negative_prompt = negativePrompt;
 
-  const response = await fetch(CONFIG.endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${CONFIG.apiKey}`,
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(300_000),
-  });
+  const requestOnce = (withSize) =>
+    fetch(CONFIG.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${CONFIG.apiKey}`,
+      },
+      body: JSON.stringify(makeBody(withSize)),
+      signal: AbortSignal.timeout(300_000),
+    });
 
-  const text = await response.text();
+  let response = await requestOnce(Boolean(size));
+  let text = await response.text();
+  if (!response.ok && response.status >= 400 && response.status < 500 && size) {
+    // 个别模型不接受 size 参数，去掉后重试一次
+    response = await requestOnce(false);
+    text = await response.text();
+  }
   let payload;
   try {
     payload = JSON.parse(text);
@@ -269,6 +281,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const { image, prompt, negativePrompt } = payload || {};
+    const rawSize = typeof payload?.size === 'string' ? payload.size.trim() : '';
+    const size = /^\d{3,4}\*\d{3,4}$/.test(rawSize) ? rawSize : '';
     if (typeof image !== 'string' || !IMAGE_DATA_URL.test(image)) {
       sendJson(res, 400, { error: 'image 字段必须是 png/jpeg/webp/bmp 的 base64 data URL' });
       return;
@@ -282,6 +296,7 @@ const server = http.createServer(async (req, res) => {
         image,
         prompt: prompt.trim(),
         negativePrompt: typeof negativePrompt === 'string' ? negativePrompt.trim() : '',
+        size,
       });
       sendJson(res, 200, result);
     } catch (err) {

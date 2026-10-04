@@ -14,6 +14,9 @@ const dom = {
   negativePrompt: el('negativePrompt'),
   resetPrompt: el('resetPrompt'),
   convertBtn: el('convertBtn'),
+  sharpen: el('sharpen'),
+  sharpenThreshold: el('sharpenThreshold'),
+  sharpenValue: el('sharpenValue'),
   status: el('status'),
   mode: el('mode'),
   gridN: el('gridN'),
@@ -51,7 +54,9 @@ const dom = {
 const state = {
   original: null,
   lineart: null,
+  lineartProc: null,
   uploadDataUrl: null,
+  uploadDims: null,
   fileName: 'image',
 };
 
@@ -75,12 +80,67 @@ function readSettings() {
   };
 }
 
+function dims(img) {
+  return { w: img.naturalWidth || img.width, h: img.naturalHeight || img.height };
+}
+
 function cropRect(img, square) {
-  const w = img.naturalWidth;
-  const h = img.naturalHeight;
+  const { w, h } = dims(img);
   if (!square) return { sx: 0, sy: 0, sw: w, sh: h };
   const side = Math.min(w, h);
   return { sx: Math.round((w - side) / 2), sy: Math.round((h - side) / 2), sw: side, sh: side };
+}
+
+// 线稿是二值信息：先高质量放大 2 倍，再用色阶把灰边推成纯黑/纯白，
+// 打印出来接近矢量的锐利度
+function buildProcessedLineart() {
+  state.lineartProc = null;
+  if (!state.lineart || !dom.sharpen.checked) return;
+  const src = state.lineart;
+  const { w: w0, h: h0 } = dims(src);
+  const w = w0 * 2;
+  const h = h0 * 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, w, h);
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const d = imageData.data;
+  const t = Number(dom.sharpenThreshold.value);
+  const soft = 45;
+  const lo = t - soft;
+  const range = soft * 2;
+  for (let i = 0; i < d.length; i += 4) {
+    const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    let v = ((lum - lo) * 255) / range;
+    v = v < 0 ? 0 : v > 255 ? 255 : v;
+    d[i] = v;
+    d[i + 1] = v;
+    d[i + 2] = v;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  state.lineartProc = canvas;
+}
+
+function lineartImg() {
+  return state.lineartProc || state.lineart;
+}
+
+// 按输入比例请求模型出大图（长边 2048），比例失真超过 2% 就不强制
+function sizeHint() {
+  const d = state.uploadDims;
+  if (!d) return '';
+  const long = Math.max(d.w, d.h);
+  const target = 2048;
+  let w = Math.round((d.w * target) / long);
+  let h = Math.round((d.h * target) / long);
+  w = Math.min(2048, Math.max(512, w));
+  h = Math.min(2048, Math.max(512, h));
+  if (Math.abs((w / h) / (d.w / d.h) - 1) > 0.02) return '';
+  return `${w}*${h}`;
 }
 
 function drawScene(canvas, img, settings) {
@@ -155,11 +215,11 @@ function render() {
 
   if (isCompare) {
     drawScene(dom.leftCanvas, state.original, settings);
-    drawScene(dom.rightCanvas, state.lineart, settings);
+    drawScene(dom.rightCanvas, lineartImg(), settings);
     return;
   }
 
-  const img = mode === 'original' ? state.original : state.lineart || state.original;
+  const img = mode === 'original' ? state.original : lineartImg() || state.original;
   if (img) drawScene(dom.mainCanvas, img, settings);
 }
 
@@ -204,7 +264,13 @@ async function acceptFile(file) {
     const img = await loadImage(dataUrl);
     state.original = img;
     state.lineart = null;
+    state.lineartProc = null;
     state.fileName = (file.name || 'image').replace(/\.[^.]+$/, '');
+    const ratio = Math.min(1, MAX_UPLOAD_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+    state.uploadDims = {
+      w: Math.round(img.naturalWidth * ratio),
+      h: Math.round(img.naturalHeight * ratio),
+    };
     state.uploadDataUrl = downscale(img, MAX_UPLOAD_SIDE) || dataUrl;
     dom.fileInfo.textContent = `${file.name} · ${img.naturalWidth}×${img.naturalHeight} · ${(file.size / 1024).toFixed(0)} KB`;
     dom.mode.value = 'original';
@@ -232,11 +298,13 @@ async function convert() {
         image: state.uploadDataUrl,
         prompt: dom.prompt.value,
         negativePrompt: dom.negativePrompt.value,
+        size: sizeHint(),
       }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
     state.lineart = await loadImage(data.image);
+    buildProcessedLineart();
     dom.mode.value = 'lineart';
     setStatus(`线稿已生成，用时 ${((Date.now() - started) / 1000).toFixed(1)} 秒`, 'ok');
     render();
@@ -320,10 +388,24 @@ for (const input of [dom.gridN, dom.showGrid, dom.showLabels, dom.gridColor, dom
   });
 }
 
-dom.exportLineart.addEventListener('click', () => exportCanvas(state.lineart, false, '线稿_'));
-dom.exportGrid.addEventListener('click', () => exportCanvas(state.lineart || state.original, true, '线稿带格_'));
+dom.exportLineart.addEventListener('click', () => exportCanvas(lineartImg(), false, '线稿_'));
+dom.exportGrid.addEventListener('click', () => exportCanvas(lineartImg() || state.original, true, '线稿带格_'));
 dom.exportOriginalGrid.addEventListener('click', () => exportCanvas(state.original, true, '原图带格_'));
 dom.exportGridOnly.addEventListener('click', exportGridOnly);
+
+let sharpenTimer = null;
+dom.sharpen.addEventListener('change', () => {
+  buildProcessedLineart();
+  render();
+});
+dom.sharpenThreshold.addEventListener('input', () => {
+  dom.sharpenValue.textContent = dom.sharpenThreshold.value;
+  clearTimeout(sharpenTimer);
+  sharpenTimer = setTimeout(() => {
+    buildProcessedLineart();
+    render();
+  }, 120);
+});
 
 let lastConfig = null;
 

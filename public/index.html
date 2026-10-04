@@ -69,6 +69,13 @@
         <button id="resetPrompt" class="btn ghost" type="button">恢复默认提示词</button>
         <button id="convertBtn" class="btn primary" type="button">生成线稿</button>
       </div>
+      <div class="row">
+        <label class="check"><input id="sharpen" type="checkbox" checked /> 线条锐化（2× 放大 + 二值化，只作用于线稿）</label>
+      </div>
+      <label class="field small">
+        <span>二值化阈值 <b id="sharpenValue">140</b>（越大保留越多淡线）</span>
+        <input id="sharpenThreshold" type="range" min="60" max="220" step="5" value="140" />
+      </label>
       <p id="status" class="hint status"></p>
     </section>
 
