@@ -10,8 +10,38 @@
 <header class="topbar">
   <h1>线稿临摹网格工具</h1>
   <p class="subtitle">图片 → Qwen 转黑白线稿 → 叠 n×n 方格练型准</p>
-  <span id="modelBadge" class="badge">未连接</span>
+  <span id="modelBadge" class="badge" role="button" tabindex="0" title="点击配置 API Key 和模型">未连接</span>
 </header>
+
+<div id="configModal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="configTitle">
+    <h2 id="configTitle">模型设置</h2>
+    <p class="hint">保存后写入本机 .env 文件（<code id="envPath"></code>），不会上传到任何地方。</p>
+    <label class="field">
+      <span>百炼 DashScope API Key</span>
+      <div class="row">
+        <input id="cfgKey" type="password" placeholder="sk- 开头，留空表示不修改" autocomplete="off" />
+        <button id="toggleKey" class="btn ghost" type="button">显示</button>
+      </div>
+    </label>
+    <label class="field">
+      <span>图像模型</span>
+      <input id="cfgModel" type="text" list="modelList" />
+    </label>
+    <datalist id="modelList">
+      <option value="qwen-image-edit-plus"></option>
+      <option value="qwen-image-edit"></option>
+      <option value="qwen-image-edit-max"></option>
+      <option value="qwen-image-2.0-pro"></option>
+    </datalist>
+    <p class="hint">key 在阿里云百炼控制台的「API-KEY」页面创建。</p>
+    <div class="row">
+      <button id="cfgCancel" class="btn ghost" type="button">取消</button>
+      <button id="cfgSave" class="btn primary" type="button">保存</button>
+    </div>
+    <p id="cfgStatus" class="hint status"></p>
+  </div>
+</div>
 
 <main class="layout">
   <aside class="panel">

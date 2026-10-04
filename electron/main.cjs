@@ -25,6 +25,7 @@ let win = null;
 async function boot() {
   const envFile = pickEnvFile();
   if (envFile) process.env.LINEART_ENV_FILE = envFile;
+  else if (app.isPackaged) process.env.LINEART_ENV_FILE = path.join(app.getPath('userData'), '.env');
 
   const { start } = await import('../server.js');
   const port = await start(5173).catch(() => start(0));

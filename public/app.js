@@ -38,6 +38,14 @@ const dom = {
   rightCanvas: el('rightCanvas'),
   loading: el('loading'),
   modelBadge: el('modelBadge'),
+  configModal: el('configModal'),
+  envPath: el('envPath'),
+  cfgKey: el('cfgKey'),
+  cfgModel: el('cfgModel'),
+  toggleKey: el('toggleKey'),
+  cfgCancel: el('cfgCancel'),
+  cfgSave: el('cfgSave'),
+  cfgStatus: el('cfgStatus'),
 };
 
 const state = {
@@ -317,14 +325,84 @@ dom.exportGrid.addEventListener('click', () => exportCanvas(state.lineart || sta
 dom.exportOriginalGrid.addEventListener('click', () => exportCanvas(state.original, true, '原图带格_'));
 dom.exportGridOnly.addEventListener('click', exportGridOnly);
 
+let lastConfig = null;
+
+function applyConfigBadge(cfg) {
+  lastConfig = cfg;
+  dom.modelBadge.textContent = cfg.ready ? `模型 ${cfg.model}` : '未配置 API Key';
+  dom.modelBadge.className = `badge ${cfg.ready ? 'ok' : 'bad'}`;
+  dom.convertBtn.disabled = !cfg.ready;
+}
+
+function openConfigModal() {
+  dom.envPath.textContent = lastConfig?.envFile || '未知';
+  dom.cfgModel.value = lastConfig?.model || '';
+  dom.cfgKey.value = '';
+  dom.cfgKey.type = 'password';
+  dom.toggleKey.textContent = '显示';
+  dom.cfgStatus.textContent = '';
+  dom.configModal.hidden = false;
+  dom.cfgKey.focus();
+}
+
+function closeConfigModal() {
+  dom.configModal.hidden = true;
+}
+
+dom.modelBadge.addEventListener('click', openConfigModal);
+dom.modelBadge.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    openConfigModal();
+  }
+});
+dom.cfgCancel.addEventListener('click', closeConfigModal);
+dom.configModal.addEventListener('click', (e) => {
+  if (e.target === dom.configModal) closeConfigModal();
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !dom.configModal.hidden) closeConfigModal();
+});
+dom.toggleKey.addEventListener('click', () => {
+  const show = dom.cfgKey.type === 'password';
+  dom.cfgKey.type = show ? 'text' : 'password';
+  dom.toggleKey.textContent = show ? '隐藏' : '显示';
+});
+dom.cfgSave.addEventListener('click', async () => {
+  const body = {};
+  if (dom.cfgKey.value.trim()) body.apiKey = dom.cfgKey.value.trim();
+  if (dom.cfgModel.value.trim()) body.model = dom.cfgModel.value.trim();
+  if (!Object.keys(body).length) {
+    dom.cfgStatus.textContent = 'key 和模型至少填一项';
+    dom.cfgStatus.className = 'hint status error';
+    return;
+  }
+  dom.cfgSave.disabled = true;
+  try {
+    const response = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `保存失败 (${response.status})`);
+    applyConfigBadge(data);
+    closeConfigModal();
+    setStatus('设置已保存并立即生效', 'ok');
+  } catch (err) {
+    dom.cfgStatus.textContent = err.message || '保存失败';
+    dom.cfgStatus.className = 'hint status error';
+  } finally {
+    dom.cfgSave.disabled = false;
+  }
+});
+
 fetch('/api/config')
   .then((r) => r.json())
   .then((cfg) => {
-    dom.modelBadge.textContent = cfg.ready ? `模型 ${cfg.model}` : '未配置 API Key';
-    dom.modelBadge.className = `badge ${cfg.ready ? 'ok' : 'bad'}`;
-    dom.convertBtn.disabled = !cfg.ready;
+    applyConfigBadge(cfg);
     if (!cfg.ready) {
-      setStatus('未检测到 DASHSCOPE_API_KEY：复制 .env.example 为 .env 填入 key 后重启服务。也可以直接载入已有线稿叠格子。');
+      setStatus('未检测到 API Key：点右上角「未配置 API Key」徽章，在弹窗里粘贴 key 保存即可，不用手动改 .env。也可以直接载入已有线稿叠格子。');
     }
   })
   .catch(() => {

@@ -8,7 +8,8 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const MAX_BODY_BYTES = 40 * 1024 * 1024;
 
-loadEnv(process.env.LINEART_ENV_FILE || path.join(ROOT, '.env'));
+const ENV_FILE = process.env.LINEART_ENV_FILE || path.join(ROOT, '.env');
+loadEnv(ENV_FILE);
 
 const CONFIG = {
   apiKey: process.env.DASHSCOPE_API_KEY || '',
@@ -37,6 +38,30 @@ function loadEnv(file) {
     if (/^(".*"|'.*')$/s.test(value)) value = value.slice(1, -1);
     if (!(key in process.env)) process.env[key] = value;
   }
+}
+
+function persistEnv(updates) {
+  let text = '';
+  try {
+    text = fs.readFileSync(ENV_FILE, 'utf8');
+  } catch {
+    text = '';
+  }
+  if (text && !text.endsWith('\n')) text += '\n';
+  const pending = { ...updates };
+  const out = text.split('\n').map((line) => {
+    const m = line.match(/^([A-Z][A-Z0-9_]*)=/);
+    if (m && pending[m[1]] !== undefined) {
+      const value = pending[m[1]];
+      delete pending[m[1]];
+      return `${m[1]}=${value}`;
+    }
+    return line;
+  });
+  for (const [key, value] of Object.entries(pending)) out.push(`${key}=${value}`);
+  while (out.length && out[out.length - 1] === '') out.pop();
+  fs.mkdirSync(path.dirname(ENV_FILE), { recursive: true });
+  fs.writeFileSync(ENV_FILE, `${out.join('\n')}\n`, 'utf8');
 }
 
 function sendJson(res, status, payload) {
@@ -189,6 +214,48 @@ const server = http.createServer(async (req, res) => {
       model: CONFIG.model,
       endpoint: CONFIG.endpoint,
       ready: Boolean(CONFIG.apiKey) && !CONFIG.apiKey.includes('xxxxxxxx'),
+      envFile: ENV_FILE,
+    });
+    return;
+  }
+
+  if (url.pathname === '/api/config' && req.method === 'POST') {
+    const remote = req.socket.remoteAddress || '';
+    const isLoopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+    if (!isLoopback) {
+      sendJson(res, 403, { error: '设置只允许在本机修改' });
+      return;
+    }
+    let payload;
+    try {
+      payload = JSON.parse(await readBody(req));
+    } catch {
+      sendJson(res, 400, { error: '请求体不是合法 JSON' });
+      return;
+    }
+    const updates = {};
+    if (typeof payload?.apiKey === 'string' && payload.apiKey.trim()) {
+      updates.DASHSCOPE_API_KEY = payload.apiKey.trim();
+    }
+    if (typeof payload?.model === 'string' && payload.model.trim()) {
+      updates.QWEN_IMAGE_MODEL = payload.model.trim();
+    }
+    if (!Object.keys(updates).length) {
+      sendJson(res, 400, { error: '没有要保存的修改：key 或模型至少填一项' });
+      return;
+    }
+    try {
+      persistEnv(updates);
+    } catch (err) {
+      sendJson(res, 500, { error: `写入 .env 失败：${err.message}` });
+      return;
+    }
+    if (updates.DASHSCOPE_API_KEY) CONFIG.apiKey = updates.DASHSCOPE_API_KEY;
+    if (updates.QWEN_IMAGE_MODEL) CONFIG.model = updates.QWEN_IMAGE_MODEL;
+    sendJson(res, 200, {
+      model: CONFIG.model,
+      ready: Boolean(CONFIG.apiKey) && !CONFIG.apiKey.includes('xxxxxxxx'),
+      envFile: ENV_FILE,
     });
     return;
   }
