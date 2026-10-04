@@ -4,10 +4,38 @@
   "private": true,
   "type": "module",
   "description": "把图片转成黑白线稿并叠加 n×n 临摹网格",
+  "main": "electron/main.cjs",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "app": "electron .",
+    "dist": "electron-builder --win"
   },
   "engines": {
     "node": ">=20"
+  },
+  "build": {
+    "appId": "local.lineart-grid",
+    "productName": "线稿临摹网格工具",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "server.js",
+      "public/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ]
+    },
+    "portable": {
+      "artifactName": "lineart-grid.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3"
   }
 }

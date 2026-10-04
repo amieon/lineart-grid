@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,7 +8,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const MAX_BODY_BYTES = 40 * 1024 * 1024;
 
-loadEnv(path.join(ROOT, '.env'));
+loadEnv(process.env.LINEART_ENV_FILE || path.join(ROOT, '.env'));
 
 const CONFIG = {
   apiKey: process.env.DASHSCOPE_API_KEY || '',
@@ -230,10 +231,41 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(405).end('Method Not Allowed');
 });
 
-server.listen(CONFIG.port, () => {
-  console.log(`线稿格子工具已启动: http://localhost:${CONFIG.port}`);
-  console.log(`模型: ${CONFIG.model}`);
-  if (!CONFIG.apiKey || CONFIG.apiKey.includes('xxxxxxxx')) {
-    console.log('提示: 尚未配置 DASHSCOPE_API_KEY，只能使用「直接加载线稿」功能');
+function lanAddresses() {
+  const addresses = [];
+  for (const interfaces of Object.values(os.networkInterfaces())) {
+    for (const iface of interfaces || []) {
+      if (iface.family === 'IPv4' && !iface.internal) addresses.push(iface.address);
+    }
   }
-});
+  return addresses;
+}
+
+export function start(port = CONFIG.port) {
+  return new Promise((resolve, reject) => {
+    server.once('error', (err) => {
+      if (err.code === 'EADDRINUSE') reject(new Error(`端口 ${port} 已被占用，先关掉另一个实例或改 .env 里的 PORT`));
+      else reject(err);
+    });
+    server.listen(port, () => {
+      const actual = server.address().port;
+      console.log(`线稿格子工具已启动: http://localhost:${actual}`);
+      for (const address of lanAddresses()) {
+        console.log(`手机同 Wi-Fi 访问: http://${address}:${actual}`);
+      }
+      console.log(`模型: ${CONFIG.model}`);
+      if (!CONFIG.apiKey || CONFIG.apiKey.includes('xxxxxxxx')) {
+        console.log('提示: 尚未配置 DASHSCOPE_API_KEY，只能使用「直接加载线稿」功能');
+      }
+      resolve(actual);
+    });
+  });
+}
+
+const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirectRun) {
+  start().catch((err) => {
+    console.error(err.message);
+    process.exit(1);
+  });
+}
