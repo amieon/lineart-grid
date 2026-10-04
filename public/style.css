@@ -218,6 +218,64 @@ textarea:focus, select:focus { outline: 1px solid var(--accent); }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.gcard {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.gcard img {
+  display: block;
+  width: 100%;
+  height: 88px;
+  object-fit: cover;
+  cursor: pointer;
+  background: #fff;
+}
+.gcard img:hover { opacity: .85; }
+.gmeta {
+  padding: 3px 6px;
+  font-size: 10px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  background: var(--panel, #fafafa);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.gname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.gsub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gdel {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s;
+}
+.gcard:hover .gdel { opacity: 1; }
+
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
   .panel { position: static; max-height: none; }

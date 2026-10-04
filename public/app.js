@@ -59,6 +59,10 @@ const dom = {
   cfgCancel: el('cfgCancel'),
   cfgSave: el('cfgSave'),
   cfgStatus: el('cfgStatus'),
+  gallery: el('gallery'),
+  saveToGallery: el('saveToGallery'),
+  galleryRefresh: el('refreshGallery'),
+  galleryStatus: el('galleryStatus'),
 };
 
 const state = {
@@ -546,6 +550,7 @@ async function convert() {
         prompt: dom.prompt.value,
         negativePrompt: dom.negativePrompt.value,
         size: sizeHint(),
+        fileName: state.fileName,
       }),
     });
     const data = await response.json().catch(() => ({}));
@@ -554,10 +559,11 @@ async function convert() {
     state.lineartProc = null;
     dom.mode.value = 'lineart';
     setStatus(
-      `线稿已生成（原始，未处理），用时 ${((Date.now() - started) / 1000).toFixed(1)} 秒。现在到第 3 组挑滤波器，点「应用处理」是本地免费的，可反复调。`,
+      `线稿已生成并存入线稿库（原始，未处理），用时 ${((Date.now() - started) / 1000).toFixed(1)} 秒。之后随时从第 6 组取用，本地处理不花钱。`,
       'ok'
     );
     render();
+    refreshGallery();
   } catch (err) {
     setStatus(err.message || '生成失败', 'error');
   } finally {
@@ -761,3 +767,125 @@ fetch('/api/config')
     dom.modelBadge.textContent = '无法连接服务';
     dom.modelBadge.className = 'badge bad';
   });
+
+// ---------- 6. 线稿库（AI 原稿存盘，免费复用） ----------
+function galleryMsg(text, kind = '') {
+  dom.galleryStatus.textContent = text;
+  dom.galleryStatus.className = `hint status ${kind}`;
+}
+
+function esc(s) {
+  return (s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function imgToDataUrl(img) {
+  const { w, h } = dims(img);
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext('2d').drawImage(img, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+function renderGallery(items) {
+  dom.gallery.innerHTML = '';
+  if (!items.length) {
+    galleryMsg('库里还没有线稿。生成一次就会自动存进来。');
+    return;
+  }
+  for (const it of items) {
+    const card = document.createElement('div');
+    card.className = 'gcard';
+    const img = document.createElement('img');
+    img.src = `/api/gallery/${it.id}`;
+    img.alt = it.name || '线稿';
+    img.loading = 'lazy';
+    img.title = '点击载入到编辑器（不花钱）';
+    img.addEventListener('click', () => loadFromGallery(it));
+    const when = new Date(it.createdAt);
+    const meta = document.createElement('div');
+    meta.className = 'gmeta';
+    meta.innerHTML =
+      `<span class="gname" title="${esc(it.name)}">${esc(it.name || '未命名')}</span>` +
+      `<span class="gsub">${when.getMonth() + 1}/${when.getDate()} ${esc(it.model || '')}</span>`;
+    const del = document.createElement('button');
+    del.className = 'gdel';
+    del.type = 'button';
+    del.textContent = '×';
+    del.title = '从库里删除';
+    del.addEventListener('click', () => deleteFromGallery(it.id));
+    card.append(img, meta, del);
+    dom.gallery.appendChild(card);
+  }
+}
+
+async function refreshGallery() {
+  try {
+    const r = await fetch('/api/gallery');
+    const d = await r.json();
+    renderGallery(d.items || []);
+  } catch {
+    galleryMsg('线稿库读取失败', 'error');
+  }
+}
+
+async function loadFromGallery(it) {
+  try {
+    const img = await loadImage(`/api/gallery/${it.id}`);
+    state.lineart = img;
+    state.lineartProc = null;
+    state.fileName = it.name || '线稿';
+    dom.mode.value = 'lineart';
+    setStatus(`已从线稿库载入「${it.name || '未命名'}」，去第 3 组本地处理，不花钱。`, 'ok');
+    render();
+  } catch (err) {
+    galleryMsg(`载入失败：${err.message}`, 'error');
+  }
+}
+
+async function deleteFromGallery(id) {
+  try {
+    const r = await fetch(`/api/gallery/${id}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || '删除失败');
+    renderGallery(d.items || []);
+    galleryMsg('已删除。', 'ok');
+  } catch (err) {
+    galleryMsg(err.message, 'error');
+  }
+}
+
+async function saveCurrentToGallery() {
+  const img = lineartImg();
+  if (!img) {
+    galleryMsg('没有可存入的线稿', 'error');
+    return;
+  }
+  let dataUrl;
+  try {
+    dataUrl = img instanceof HTMLCanvasElement ? img.toDataURL('image/png') : imgToDataUrl(img);
+  } catch (err) {
+    galleryMsg(`读取图像失败：${err.message}`, 'error');
+    return;
+  }
+  dom.saveToGallery.disabled = true;
+  try {
+    const r = await fetch('/api/gallery', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: dataUrl, name: state.fileName, prompt: dom.prompt.value, model: lastConfig?.model || '' }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || '存入失败');
+    renderGallery(d.items || []);
+    galleryMsg('已存入线稿库。', 'ok');
+  } catch (err) {
+    galleryMsg(err.message, 'error');
+  } finally {
+    dom.saveToGallery.disabled = false;
+  }
+}
+
+dom.saveToGallery.addEventListener('click', saveCurrentToGallery);
+dom.galleryRefresh.addEventListener('click', refreshGallery);
+refreshGallery();

@@ -27,6 +27,15 @@ async function boot() {
   if (envFile) process.env.LINEART_ENV_FILE = envFile;
   else if (app.isPackaged) process.env.LINEART_ENV_FILE = path.join(app.getPath('userData'), '.env');
 
+  // 线稿库要落在持久、可写的目录：便携 exe 每次会重解压到临时目录，
+  // 若用安装目录会丢数据，所以优先 exe 真实所在目录，其次用户数据目录。
+  if (app.isPackaged && !process.env.LINEART_DATA_DIR) {
+    const base =
+      process.env.PORTABLE_EXECUTABLE_DIR ||
+      path.dirname(process.env.LINEART_ENV_FILE || path.join(app.getPath('userData'), '.env'));
+    process.env.LINEART_DATA_DIR = path.join(base, 'linearts');
+  }
+
   const { start } = await import('../server.js');
   const port = await start(5173).catch(() => start(0));
 

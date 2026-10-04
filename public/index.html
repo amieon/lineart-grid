@@ -176,6 +176,17 @@
       </div>
       <p class="hint">导出为 PNG，尺寸与原图一致，可直接打印。空白网格是透明背景，只有格线和格号，方便垫在纸下或叠在别的图上临摹。</p>
     </section>
+
+    <section class="group">
+      <h2>6. 线稿库 <span class="tag free">免费复用</span></h2>
+      <p class="hint">每次 AI 生成的原稿都自动存在这里，随时点开载入、本地处理，不再重复花钱。</p>
+      <div class="row">
+        <button id="saveToGallery" class="btn" type="button">存入当前线稿</button>
+        <button id="refreshGallery" class="btn ghost" type="button">刷新</button>
+      </div>
+      <div id="gallery" class="gallery"></div>
+      <p id="galleryStatus" class="hint status"></p>
+    </section>
   </aside>
 
   <section class="stage">

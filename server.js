@@ -11,6 +11,11 @@ const MAX_BODY_BYTES = 40 * 1024 * 1024;
 const ENV_FILE = process.env.LINEART_ENV_FILE || path.join(ROOT, '.env');
 loadEnv(ENV_FILE);
 
+// 线稿库：每次 AI 生成的原稿都存到这里，之后随时取用、本地处理，不再重复付费
+const DATA_DIR = process.env.LINEART_DATA_DIR || path.join(ROOT, 'linearts');
+const INDEX_FILE = path.join(DATA_DIR, 'index.json');
+const SAFE_ID = /^[a-zA-Z0-9_-]{1,64}$/;
+
 const CONFIG = {
   apiKey: process.env.DASHSCOPE_API_KEY || '',
   model: process.env.QWEN_IMAGE_MODEL || 'qwen-image-edit-plus',
@@ -62,6 +67,45 @@ function persistEnv(updates) {
   while (out.length && out[out.length - 1] === '') out.pop();
   fs.mkdirSync(path.dirname(ENV_FILE), { recursive: true });
   fs.writeFileSync(ENV_FILE, `${out.join('\n')}\n`, 'utf8');
+}
+
+function readIndex() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(INDEX_FILE, 'utf8'));
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeIndex(items) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(INDEX_FILE, JSON.stringify(items, null, 2), 'utf8');
+}
+
+function makeId() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// 把一张线稿存进库：写 PNG 文件 + 追加元数据，返回该条记录
+function saveLineart({ buffer, mime, name, prompt, model }) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const id = makeId();
+  const file = `${id}.${mime === 'image/jpeg' ? 'jpg' : 'png'}`;
+  fs.writeFileSync(path.join(DATA_DIR, file), buffer);
+  const item = {
+    id,
+    file,
+    name: (name || '未命名').slice(0, 120),
+    mime,
+    createdAt: new Date().toISOString(),
+    model: model || '',
+    prompt: prompt || '',
+  };
+  const items = readIndex();
+  items.unshift(item);
+  writeIndex(items);
+  return item;
 }
 
 function sendJson(res, status, payload) {
@@ -298,10 +342,104 @@ const server = http.createServer(async (req, res) => {
         negativePrompt: typeof negativePrompt === 'string' ? negativePrompt.trim() : '',
         size,
       });
-      sendJson(res, 200, result);
+      // 自动存入线稿库，之后可反复取用而不再花钱
+      let galleryId = null;
+      try {
+        const m = /^data:([^;]+);base64,(.+)$/s.exec(result.image);
+        if (m) {
+          const buffer = Buffer.from(m[2], 'base64');
+          const item = saveLineart({
+            buffer,
+            mime: m[1],
+            name: typeof payload?.fileName === 'string' ? payload.fileName : '',
+            prompt: prompt.trim(),
+            model: CONFIG.model,
+          });
+          galleryId = item.id;
+        }
+      } catch {
+        // 存盘失败不影响本次返回
+      }
+      sendJson(res, 200, { ...result, galleryId });
     } catch (err) {
       sendJson(res, err.status || 500, { error: err.message || '转换失败' });
     }
+    return;
+  }
+
+  if (url.pathname === '/api/gallery' && req.method === 'GET') {
+    sendJson(res, 200, { items: readIndex() });
+    return;
+  }
+
+  if (url.pathname === '/api/gallery' && req.method === 'POST') {
+    let payload;
+    try {
+      payload = JSON.parse(await readBody(req));
+    } catch (err) {
+      sendJson(res, 400, { error: err.message || '请求体不是合法 JSON' });
+      return;
+    }
+    const image = payload?.image;
+    if (typeof image !== 'string' || !IMAGE_DATA_URL.test(image)) {
+      sendJson(res, 400, { error: 'image 字段必须是 png/jpeg/webp 的 base64 data URL' });
+      return;
+    }
+    const m = /^data:([^;]+);base64,(.+)$/s.exec(image);
+    try {
+      const item = saveLineart({
+        buffer: Buffer.from(m[2], 'base64'),
+        mime: m[1],
+        name: typeof payload?.name === 'string' ? payload.name : '',
+        prompt: typeof payload?.prompt === 'string' ? payload.prompt : '',
+        model: typeof payload?.model === 'string' ? payload.model : '',
+      });
+      sendJson(res, 200, { item, items: readIndex() });
+    } catch (err) {
+      sendJson(res, 500, { error: `存入线稿库失败：${err.message}` });
+    }
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/gallery/')) {
+    const id = decodeURIComponent(url.pathname.slice('/api/gallery/'.length));
+    if (!SAFE_ID.test(id)) {
+      sendJson(res, 400, { error: '非法 id' });
+      return;
+    }
+    const item = readIndex().find((it) => it.id === id);
+    if (!item) {
+      sendJson(res, 404, { error: '线稿不存在' });
+      return;
+    }
+    const filePath = path.join(DATA_DIR, path.basename(item.file));
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      fs.readFile(filePath, (err, data) => {
+        if (err) {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Not Found');
+          return;
+        }
+        res.writeHead(200, {
+          'Content-Type': item.mime || 'image/png',
+          'Content-Length': data.length,
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        });
+        res.end(req.method === 'HEAD' ? undefined : data);
+      });
+      return;
+    }
+    if (req.method === 'DELETE') {
+      try {
+        fs.rmSync(filePath, { force: true });
+        const items = readIndex().filter((it) => it.id !== id);
+        writeIndex(items);
+        sendJson(res, 200, { items });
+      } catch (err) {
+        sendJson(res, 500, { error: `删除失败：${err.message}` });
+      }
+      return;
+    }
+    sendJson(res, 405, { error: 'Method Not Allowed' });
     return;
   }
 
@@ -336,6 +474,7 @@ export function start(port = CONFIG.port) {
         console.log(`手机同 Wi-Fi 访问: http://${address}:${actual}`);
       }
       console.log(`模型: ${CONFIG.model}`);
+      console.log(`线稿库存放目录: ${DATA_DIR}`);
       if (!CONFIG.apiKey || CONFIG.apiKey.includes('xxxxxxxx')) {
         console.log('提示: 尚未配置 DASHSCOPE_API_KEY，只能使用「直接加载线稿」功能');
       }
