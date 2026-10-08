@@ -43,6 +43,19 @@
   </div>
 </div>
 
+<div id="galleryPage" class="gallery-page" hidden>
+  <header class="gp-bar">
+    <button id="galleryBack" class="btn ghost" type="button">← 返回编辑</button>
+    <h2 class="gp-title">线稿库 <span id="galleryCount" class="gp-count">0</span></h2>
+    <div class="gp-actions">
+      <button id="saveToGallery" class="btn" type="button">存入当前线稿</button>
+      <button id="galleryRefresh" class="btn ghost" type="button">刷新</button>
+    </div>
+  </header>
+  <p id="galleryStatus" class="hint status gp-status"></p>
+  <div id="galleryGrid" class="gp-grid"></div>
+</div>
+
 <main class="layout">
   <aside class="panel">
     <section class="group">
@@ -180,12 +193,7 @@
     <section class="group">
       <h2>6. 线稿库 <span class="tag free">免费复用</span></h2>
       <p class="hint">每次 AI 生成的原稿都自动存在这里，随时点开载入、本地处理，不再重复花钱。</p>
-      <div class="row">
-        <button id="saveToGallery" class="btn" type="button">存入当前线稿</button>
-        <button id="refreshGallery" class="btn ghost" type="button">刷新</button>
-      </div>
-      <div id="gallery" class="gallery"></div>
-      <p id="galleryStatus" class="hint status"></p>
+      <button id="openGallery" class="btn primary" type="button">打开线稿库（<span id="galleryCountSidebar">0</span>）</button>
     </section>
   </aside>
 

@@ -59,9 +59,14 @@ const dom = {
   cfgCancel: el('cfgCancel'),
   cfgSave: el('cfgSave'),
   cfgStatus: el('cfgStatus'),
-  gallery: el('gallery'),
+  galleryPage: el('galleryPage'),
+  galleryGrid: el('galleryGrid'),
+  galleryCount: el('galleryCount'),
+  galleryCountSidebar: el('galleryCountSidebar'),
+  openGallery: el('openGallery'),
+  galleryBack: el('galleryBack'),
   saveToGallery: el('saveToGallery'),
-  galleryRefresh: el('refreshGallery'),
+  galleryRefresh: el('galleryRefresh'),
   galleryStatus: el('galleryStatus'),
 };
 
@@ -720,6 +725,7 @@ dom.configModal.addEventListener('click', (e) => {
 });
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !dom.configModal.hidden) closeConfigModal();
+  if (e.key === 'Escape' && !dom.galleryPage.hidden) closeGallery();
 });
 dom.toggleKey.addEventListener('click', () => {
   const show = dom.cfgKey.type === 'password';
@@ -774,10 +780,6 @@ function galleryMsg(text, kind = '') {
   dom.galleryStatus.className = `hint status ${kind}`;
 }
 
-function esc(s) {
-  return (s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-}
-
 function imgToDataUrl(img) {
   const { w, h } = dims(img);
   const canvas = document.createElement('canvas');
@@ -788,14 +790,18 @@ function imgToDataUrl(img) {
 }
 
 function renderGallery(items) {
-  dom.gallery.innerHTML = '';
-  if (!items.length) {
+  const n = items.length;
+  if (dom.galleryCount) dom.galleryCount.textContent = n;
+  if (dom.galleryCountSidebar) dom.galleryCountSidebar.textContent = n;
+  dom.galleryGrid.innerHTML = '';
+  if (!n) {
     galleryMsg('库里还没有线稿。生成一次就会自动存进来。');
     return;
   }
+  galleryMsg('');
   for (const it of items) {
     const card = document.createElement('div');
-    card.className = 'gcard';
+    card.className = 'gpcard';
     const img = document.createElement('img');
     img.src = `/api/gallery/${it.id}`;
     img.alt = it.name || '线稿';
@@ -803,20 +809,43 @@ function renderGallery(items) {
     img.title = '点击载入到编辑器（不花钱）';
     img.addEventListener('click', () => loadFromGallery(it));
     const when = new Date(it.createdAt);
+    const pad = (x) => String(x).padStart(2, '0');
+    const dateStr = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} ${pad(when.getHours())}:${pad(when.getMinutes())}`;
     const meta = document.createElement('div');
-    meta.className = 'gmeta';
-    meta.innerHTML =
-      `<span class="gname" title="${esc(it.name)}">${esc(it.name || '未命名')}</span>` +
-      `<span class="gsub">${when.getMonth() + 1}/${when.getDate()} ${esc(it.model || '')}</span>`;
+    meta.className = 'gpmeta';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'gpname';
+    nameEl.textContent = it.name || '未命名';
+    nameEl.title = it.name || '';
+    const subEl = document.createElement('div');
+    subEl.className = 'gpsub';
+    subEl.textContent = it.model ? `${dateStr} · ${it.model}` : dateStr;
+    meta.append(nameEl, subEl);
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'btn primary gpop';
+    open.textContent = '载入';
+    open.addEventListener('click', () => loadFromGallery(it));
     const del = document.createElement('button');
-    del.className = 'gdel';
     del.type = 'button';
-    del.textContent = '×';
-    del.title = '从库里删除';
+    del.className = 'btn ghost gpdel';
+    del.textContent = '删除';
     del.addEventListener('click', () => deleteFromGallery(it.id));
-    card.append(img, meta, del);
-    dom.gallery.appendChild(card);
+    const acts = document.createElement('div');
+    acts.className = 'gpacts';
+    acts.append(open, del);
+    card.append(img, meta, acts);
+    dom.galleryGrid.appendChild(card);
   }
+}
+
+function openGalleryPage() {
+  dom.galleryPage.hidden = false;
+  refreshGallery();
+}
+
+function closeGallery() {
+  dom.galleryPage.hidden = true;
 }
 
 async function refreshGallery() {
@@ -838,6 +867,7 @@ async function loadFromGallery(it) {
     dom.mode.value = 'lineart';
     setStatus(`已从线稿库载入「${it.name || '未命名'}」，去第 3 组本地处理，不花钱。`, 'ok');
     render();
+    closeGallery();
   } catch (err) {
     galleryMsg(`载入失败：${err.message}`, 'error');
   }
@@ -888,4 +918,6 @@ async function saveCurrentToGallery() {
 
 dom.saveToGallery.addEventListener('click', saveCurrentToGallery);
 dom.galleryRefresh.addEventListener('click', refreshGallery);
+dom.openGallery.addEventListener('click', openGalleryPage);
+dom.galleryBack.addEventListener('click', closeGallery);
 refreshGallery();
