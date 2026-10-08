@@ -86,27 +86,54 @@
     </section>
 
     <section class="group">
-      <h2>3. 本地抽线 <span class="tag free">Canny · 免费</span></h2>
-      <p class="hint">不用 AI：双边滤波保边 → Scharr 梯度 → 非极大值抑制 → 双阈值滞后连通 → 连通域尺寸过滤。它只认像素突变、不会替你简化，所以纹理会变成碎线黑点，靠「最短笔画」和「值域 σ」压。</p>
-      <label class="check"><input id="extractSmooth" type="checkbox" checked /> 双边滤波预处理（压掉渐变纹理、保住强边缘）</label>
+      <h2>3. 本地抽线 <span class="tag free">免费 · 可反复</span></h2>
+      <p class="hint">不用 AI，全程在浏览器本地跑。手绘 / 纸扫描线选「提墨」，照片选「边缘」。</p>
       <label class="field small">
-        <span>值域 σ <b id="extractSigmaValue">26</b>（越大压得越狠，淡线也会被抹掉）</span>
-        <input id="extractSigma" type="range" min="4" max="60" step="2" value="26" />
+        <span>方法</span>
+        <select id="extractMethod">
+          <option value="sauvola">自适应阈值提墨（Sauvola）— 手绘线稿首选</option>
+          <option value="canny">边缘检测（Canny）— 照片、明暗渐变</option>
+        </select>
       </label>
+
+      <div id="sauvolaOpts">
+        <p class="hint">比局部背景「明显更黑」的像素算墨，整条笔画连成实心一块，所以不会像边缘检测那样把一条软线裂成两条描边。阈值 t = mean·(1 + k·(std/R − 1))，mean/std 用积分图 O(1) 取窗。</p>
+        <label class="field small">
+          <span>局部窗口半径 <b id="extractRadiusValue">15</b>（窗口 2r+1，要大于笔宽）</span>
+          <input id="extractRadius" type="range" min="3" max="40" step="1" value="15" />
+        </label>
+        <label class="field small">
+          <span>严格度 k <b id="extractKValue">0.20</b>（越大越挑剔：只留浓墨；接近 0 时纸面明暗不匀会连成一片）</span>
+          <input id="extractK" type="range" min="0.05" max="0.5" step="0.01" value="0.2" />
+        </label>
+        <label class="check"><input id="extractSkeleton" type="checkbox" checked /> 骨架化（Zhang-Suen：把实心笔画收成居中线，治双线）</label>
+      </div>
+
+      <div id="cannyOpts" hidden>
+        <p class="hint">双边滤波保边 → Scharr 梯度 → 非极大值抑制 → 双阈值滞后连通。它只认像素突变、不会替你简化，所以纹理会变成碎线黑点，靠「最短笔画」和「值域 σ」压。</p>
+        <label class="check"><input id="extractSmooth" type="checkbox" checked /> 双边滤波预处理（压掉渐变纹理、保住强边缘）</label>
+        <label class="field small">
+          <span>值域 σ <b id="extractSigmaValue">26</b>（越大压得越狠，淡线也会被抹掉）</span>
+          <input id="extractSigma" type="range" min="4" max="60" step="2" value="26" />
+        </label>
+        <label class="check"><input id="extractAuto" type="checkbox" checked /> Otsu 自动定阈（类间方差最大化）</label>
+        <div class="row wrap">
+          <label class="field small">
+            <span>低阈 <b id="extractLoValue">30</b></span>
+            <input id="extractLo" type="range" min="5" max="120" step="5" value="30" />
+          </label>
+          <label class="field small">
+            <span>高阈 <b id="extractHiValue">75</b></span>
+            <input id="extractHi" type="range" min="10" max="200" step="5" value="75" />
+          </label>
+        </div>
+      </div>
+
       <label class="field small">
-        <span>最短笔画 <b id="extractMinLenValue">60</b> px（小于这个长度的连通块直接丢 —— 治黑点）</span>
+        <span>最短笔画 <b id="extractMinLenValue">60</b> px（小于这个长度的连通块直接丢 —— 治黑点 / 纸屑）</span>
         <input id="extractMinLen" type="range" min="1" max="400" step="1" value="60" />
       </label>
-      <label class="check"><input id="extractAuto" type="checkbox" checked /> Otsu 自动定阈（类间方差最大化）</label>
-      <div class="row wrap">
-        <label class="field small">
-          <span>低阈 <b id="extractLoValue">30</b></span>
-          <input id="extractLo" type="range" min="5" max="120" step="5" value="30" />
-        </label>
-        <label class="field small">
-          <span>高阈 <b id="extractHiValue">75</b></span>
-          <input id="extractHi" type="range" min="10" max="200" step="5" value="75" />
-        </label>
+      <div class="row">
         <label class="field small">
           <span>线宽</span>
           <select id="extractThick">
@@ -235,16 +262,26 @@
   </aside>
 
   <section class="stage">
-    <div id="empty" class="empty">
-      <p>先放一张图进来吧</p>
-      <p class="hint">没有 API key 也能用：拖一张图进去，用第 3 组「本地抽线」免费出线稿，或直接叠格子</p>
+    <div class="zoombar">
+      <button id="zoomOut" class="btn ghost" type="button" title="缩小">−</button>
+      <span id="zoomValue" class="zoom-val">适应</span>
+      <button id="zoomIn" class="btn ghost" type="button" title="放大">＋</button>
+      <button id="zoomFit" class="btn ghost" type="button">适应窗口</button>
+      <button id="zoomReal" class="btn ghost" type="button" title="一个画布像素对一个屏幕像素，用来看线条毛边">1:1 逐像素</button>
+      <p class="hint">Ctrl + 滚轮缩放 · 按住拖动平移</p>
     </div>
-    <div id="singleView" class="view" hidden>
-      <canvas id="mainCanvas"></canvas>
-    </div>
-    <div id="compareView" class="view compare" hidden>
-      <figure><canvas id="leftCanvas"></canvas><figcaption>原图</figcaption></figure>
-      <figure><canvas id="rightCanvas"></canvas><figcaption>线稿</figcaption></figure>
+    <div id="viewport" class="viewport">
+      <div id="empty" class="empty">
+        <p>先放一张图进来吧</p>
+        <p class="hint">没有 API key 也能用：拖一张图进去，用第 3 组「本地抽线」免费出线稿，或直接叠格子</p>
+      </div>
+      <div id="singleView" class="view" hidden>
+        <canvas id="mainCanvas"></canvas>
+      </div>
+      <div id="compareView" class="view compare" hidden>
+        <figure><canvas id="leftCanvas"></canvas><figcaption>原图</figcaption></figure>
+        <figure><canvas id="rightCanvas"></canvas><figcaption>线稿</figcaption></figure>
+      </div>
     </div>
     <div id="loading" class="loading" hidden><div class="spinner"></div><span>模型正在画线稿，通常 10~40 秒…</span></div>
   </section>

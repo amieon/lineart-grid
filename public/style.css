@@ -171,13 +171,45 @@ textarea:focus, select:focus { outline: 1px solid var(--accent); }
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 16px;
-  min-height: 60vh;
+  padding: 0;
+  /* 必须钉住高度，否则 .viewport 会跟着内容长高，纵向溢出变成整页滚动、拖拽平移失效 */
+  height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 16px;
+  overflow: hidden;
+}
+
+/* 缩放工具条 + 可滚动画布视口（细看用） */
+.zoombar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  position: relative;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
 }
+.zoombar .btn { padding: 3px 9px; font-size: 12px; }
+.zoombar .hint { margin: 0 0 0 auto; }
+.zoom-val {
+  min-width: 48px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.viewport {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  overscroll-behavior: contain;
+  cursor: grab;
+}
+.viewport.grabbing { cursor: grabbing; user-select: none; }
+.viewport > .empty { padding: 16vh 0; }
 
 .empty { color: var(--muted); text-align: center; }
 .empty p:first-child { font-size: 16px; color: var(--text); }
@@ -185,11 +217,17 @@ textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .view { width: 100%; text-align: center; }
 .view canvas {
   max-width: 100%;
-  max-height: calc(100vh - 160px);
+  max-height: calc(100vh - 130px); /* 适配模式下留掉 topbar+缩放条+内边距，别顶出视口 */
   background: #fff;
   border-radius: 4px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, .4);
 }
+/* 手动缩放时解除适配限制，让画布按真实像素撑开、靠视口滚动看。
+   .view 必须改成 max-content：否则超宽画布在 text-align:center 下会左右同时溢出，
+   左边那截 scrollLeft 滚不到。 */
+.viewport.zoomed .view { width: max-content; min-width: 100%; }
+.viewport.zoomed .view canvas { max-width: none; max-height: none; }
+.viewport.zoomed .compare figure { flex: 0 0 auto; }
 
 .compare { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
 .compare figure { margin: 0; flex: 1 1 320px; min-width: 280px; }
@@ -299,4 +337,5 @@ textarea:focus, select:focus { outline: 1px solid var(--accent); }
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
   .panel { position: static; max-height: none; }
+  .stage { position: static; height: 70vh; }
 }
