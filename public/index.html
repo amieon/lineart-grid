@@ -87,11 +87,15 @@
 
     <section class="group">
       <h2>3. 本地抽线 <span class="tag free">Canny · 免费</span></h2>
-      <p class="hint">不用 AI：双边滤波保边 → Scharr 梯度 → 非极大值抑制 → 双阈值滞后连通。只认像素突变，所以轮廓准、但内部明暗纹理会变成杂线；拿它跟第 2 组的 AI 稿对比看差别。</p>
+      <p class="hint">不用 AI：双边滤波保边 → Scharr 梯度 → 非极大值抑制 → 双阈值滞后连通 → 连通域尺寸过滤。它只认像素突变、不会替你简化，所以纹理会变成碎线黑点，靠「最短笔画」和「值域 σ」压。</p>
       <label class="check"><input id="extractSmooth" type="checkbox" checked /> 双边滤波预处理（压掉渐变纹理、保住强边缘）</label>
       <label class="field small">
-        <span>值域 σ <b id="extractSigmaValue">18</b>（越大压得越狠，淡线也会被抹掉）</span>
-        <input id="extractSigma" type="range" min="4" max="60" step="2" value="18" />
+        <span>值域 σ <b id="extractSigmaValue">26</b>（越大压得越狠，淡线也会被抹掉）</span>
+        <input id="extractSigma" type="range" min="4" max="60" step="2" value="26" />
+      </label>
+      <label class="field small">
+        <span>最短笔画 <b id="extractMinLenValue">60</b> px（小于这个长度的连通块直接丢 —— 治黑点）</span>
+        <input id="extractMinLen" type="range" min="1" max="400" step="1" value="60" />
       </label>
       <label class="check"><input id="extractAuto" type="checkbox" checked /> Otsu 自动定阈（类间方差最大化）</label>
       <div class="row wrap">

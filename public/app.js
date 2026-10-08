@@ -26,6 +26,8 @@ const dom = {
   extractHi: el('extractHi'),
   extractHiValue: el('extractHiValue'),
   extractThick: el('extractThick'),
+  extractMinLen: el('extractMinLen'),
+  extractMinLenValue: el('extractMinLenValue'),
   convKernel: el('convKernel'),
   trim: el('trim'),
   trimTol: el('trimTol'),
@@ -395,31 +397,44 @@ function otsuThreshold(g) {
 }
 
 // 滞后双阈值 + 8 邻域连通（栈做 flood fill，避免递归爆栈）：
-// 强边缘留，弱边缘只有连到强边缘才留 → 抑制孤立杂点、留住连续淡线
-function hysteresis(nms, w, h, hi, lo) {
+// 强边缘留，弱边缘只有连到强边缘才留 → 抑制孤立杂点、留住连续淡线。
+// minLen：连通域像素数小于它就整块丢掉 —— 专门治纹理碎边变成的黑点。
+function hysteresis(nms, w, h, hi, lo, minLen) {
   const out = new Uint8Array(nms.length); // 1=最终边缘
+  const comp = new Int32Array(nms.length).fill(-1);
   const stack = new Int32Array(nms.length);
-  let sp = 0;
+  const sizes = [];
+  let cid = 0;
   for (let i = 0; i < nms.length; i++) {
-    if (nms[i] >= hi) { out[i] = 1; stack[sp++] = i; }
-    else out[i] = nms[i] >= lo ? 2 : 0; // 2=候选弱边缘
-  }
-  while (sp > 0) {
-    const i = stack[--sp];
-    const y = (i / w) | 0, x = i - y * w;
-    for (let dy = -1; dy <= 1; dy++) {
-      const yy = y + dy;
-      if (yy < 0 || yy >= h) continue;
-      for (let dx = -1; dx <= 1; dx++) {
-        const xx = x + dx;
-        if (xx < 0 || xx >= w) continue;
-        const j = yy * w + xx;
-        if (out[j] === 2) { out[j] = 1; stack[sp++] = j; }
+    if (nms[i] < hi || comp[i] >= 0) continue; // 从每个未归块的强种子开一个新连通域
+    let sp = 0;
+    let size = 0;
+    out[i] = 1;
+    comp[i] = cid;
+    stack[sp++] = i;
+    while (sp > 0) {
+      const p = stack[--sp];
+      size++;
+      const y = (p / w) | 0, x = p - y * w;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= w) continue;
+          const j = yy * w + xx;
+          if (comp[j] < 0 && nms[j] >= lo) { out[j] = 1; comp[j] = cid; stack[sp++] = j; }
+        }
       }
     }
+    sizes[cid] = size;
+    cid++;
   }
-  for (let i = 0; i < out.length; i++) out[i] = out[i] === 1 ? 1 : 0;
-  return out;
+  const keep = new Uint8Array(out.length);
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] && sizes[comp[i]] >= minLen) keep[i] = 1;
+  }
+  return keep;
 }
 
 // 把二值边缘画成「暗线在亮底」的线稿 canvas；thicken = 膨胀次数（3×3 方核，每次加粗 1px）
@@ -463,11 +478,11 @@ function buildLocalLineart() {
     lo = Number(dom.extractLo.value);
     hi = Math.max(lo + 2, Number(dom.extractHi.value));
   }
-  const edge = hysteresis(nms, cw, ch, hi, lo);
+  const edge = hysteresis(nms, cw, ch, hi, lo, Number(dom.extractMinLen.value));
   const out = edgesToCanvas(edge, cw, ch, Number(dom.extractThick.value));
   state.lineart = out;
   state.lineartProc = null;
-  return { canvas: out, lo, hi, auto };
+  return { canvas: out, lo, hi, auto, minLen: Number(dom.extractMinLen.value) };
 }
 
 function upscaleCanvas(canvas, scale) {
@@ -849,6 +864,9 @@ dom.extractLo.addEventListener('input', () => {
 dom.extractHi.addEventListener('input', () => {
   dom.extractHiValue.textContent = dom.extractHi.value;
 });
+dom.extractMinLen.addEventListener('input', () => {
+  dom.extractMinLenValue.textContent = dom.extractMinLen.value;
+});
 
 function syncExtractUi() {
   const manual = !dom.extractAuto.checked;
@@ -875,8 +893,8 @@ dom.extractBtn.addEventListener('click', () => {
       dom.mode.value = 'lineart';
       render();
       setStatus(
-        `本地抽线完成（${r.canvas.width}×${r.canvas.height}，低阈 ${r.lo.toFixed(0)} / 高阈 ${r.hi.toFixed(0)}${r.auto ? '，Otsu 自动' : ''}，免费）。` +
-        '导出后可和 AI 稿对比：本地法线条更碎、纹理杂线多，AI 稿会替你简化。',
+        `本地抽线完成（${r.canvas.width}×${r.canvas.height}，低阈 ${r.lo.toFixed(0)} / 高阈 ${r.hi.toFixed(0)}${r.auto ? '，Otsu 自动' : ''}，最短笔画 ${r.minLen}px 以下的碎点已丢，免费）。` +
+        '黑点还多就把「最短笔画」往上调、或加大值域 σ；导出后和第 2 组 AI 稿对比看。',
         'ok'
       );
     } catch (err) {
