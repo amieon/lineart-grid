@@ -46,6 +46,8 @@ const dom = {
   sharpenThreshold: el('sharpenThreshold'),
   sharpenValue: el('sharpenValue'),
   morph: el('morph'),
+  morphIter: el('morphIter'),
+  morphIterValue: el('morphIterValue'),
   upscale: el('upscale'),
   processBtn: el('processBtn'),
   resetProc: el('resetProc'),
@@ -700,6 +702,7 @@ function readPipeline() {
     binarize: dom.binarize.checked,
     threshold: Number(dom.sharpenThreshold.value),
     morph: dom.morph.value,
+    morphIter: Math.max(1, Number(dom.morphIter.value) || 1),
     upscale: Number(dom.upscale.value),
   };
 }
@@ -741,12 +744,15 @@ function buildProcessedLineart() {
       g[p] = v < 0 ? 0 : v > 255 ? 255 : v;
     }
   }
-  if (s.morph === 'open') {
-    g = morphFilter(morphFilter(g, w, h, 'erode'), w, h, 'dilate');
-  } else if (s.morph === 'close') {
-    g = morphFilter(morphFilter(g, w, h, 'dilate'), w, h, 'erode');
+  // 形态学：核是 3×3（每次只啃 1px），所以「次数」就是结构元的半径。
+  // 闭运算 = 膨胀 m 次 → 腐蚀 m 次：能填掉宽 ≤ 2m px 的白缝/白洞，而线宽基本还原。
+  if (s.morph === 'open' || s.morph === 'close') {
+    const first = s.morph === 'open' ? 'erode' : 'dilate';
+    const second = s.morph === 'open' ? 'dilate' : 'erode';
+    for (let i = 0; i < s.morphIter; i++) g = morphFilter(g, w, h, first);
+    for (let i = 0; i < s.morphIter; i++) g = morphFilter(g, w, h, second);
   } else if (s.morph !== 'none') {
-    g = morphFilter(g, w, h, s.morph);
+    for (let i = 0; i < s.morphIter; i++) g = morphFilter(g, w, h, s.morph);
   }
   writeGrayBack(id, g);
   ctx.putImageData(id, 0, 0);
@@ -1175,6 +1181,9 @@ dom.sharpenThreshold.addEventListener('input', () => {
 });
 dom.trimTol.addEventListener('input', () => {
   dom.trimValue.textContent = dom.trimTol.value;
+});
+dom.morphIter.addEventListener('input', () => {
+  dom.morphIterValue.textContent = dom.morphIter.value;
 });
 
 dom.processBtn.addEventListener('click', () => {

@@ -190,9 +190,13 @@
             <option value="none">无</option>
             <option value="dilate">膨胀（加粗 / 连断线）</option>
             <option value="erode">腐蚀（变细 / 去杂点）</option>
-            <option value="open">开运算（腐蚀→膨胀，去黑杂点）</option>
-            <option value="close">闭运算（膨胀→腐蚀，补断线小孔）</option>
+            <option value="open">开运算（先腐蚀后膨胀，去黑杂点）</option>
+            <option value="close">闭运算（先膨胀后腐蚀，填黑线里的白洞）</option>
           </select>
+        </label>
+        <label class="field small">
+          <span>次数 <b id="morphIterValue">1</b>（=结构元半径，每次 1px；填宽 d px 的白洞要 ⌈d/2⌉ 次）</span>
+          <input id="morphIter" type="range" min="1" max="8" step="1" value="1" />
         </label>
         <label class="field small">
           <span>放大</span>
