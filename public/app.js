@@ -4,6 +4,8 @@ const DEFAULT_PROMPT =
   '线条粗细均匀，不要网格线、不要文字、不要水印。';
 const DEFAULT_NEGATIVE = '彩色, 灰阶, 阴影, 明暗过渡, 色块, 背景, 纹理, 网格, 文字, 水印, 模糊, 噪点, 变形';
 const MAX_UPLOAD_SIDE = 2048;
+// 双边滤波是 O(n·k²)，本地抽线先把长边压到这个尺寸以内，否则大图要卡好几秒
+const MAX_LOCAL_SIDE = 1600;
 
 const el = (id) => document.getElementById(id);
 const dom = {
@@ -14,6 +16,16 @@ const dom = {
   negativePrompt: el('negativePrompt'),
   resetPrompt: el('resetPrompt'),
   convertBtn: el('convertBtn'),
+  extractBtn: el('extractBtn'),
+  extractSmooth: el('extractSmooth'),
+  extractSigma: el('extractSigma'),
+  extractSigmaValue: el('extractSigmaValue'),
+  extractAuto: el('extractAuto'),
+  extractLo: el('extractLo'),
+  extractLoValue: el('extractLoValue'),
+  extractHi: el('extractHi'),
+  extractHiValue: el('extractHiValue'),
+  extractThick: el('extractThick'),
   convKernel: el('convKernel'),
   trim: el('trim'),
   trimTol: el('trimTol'),
@@ -120,7 +132,7 @@ function canvasOf(img, scale = 1) {
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(w * scale));
   canvas.height = Math.max(1, Math.round(h * scale));
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.imageSmoothingEnabled = scale !== 1;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -130,6 +142,15 @@ function canvasOf(img, scale = 1) {
 function toGray(id) {
   const d = id.data;
   const g = new Uint8ClampedArray(d.length >> 2);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    g[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  }
+  return g;
+}
+
+function toGrayFloat(id) {
+  const d = id.data;
+  const g = new Float32Array(d.length >> 2);
   for (let i = 0, p = 0; i < d.length; i += 4, p++) {
     g[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
   }
@@ -270,12 +291,191 @@ function applyConv(g, w, h, kernel) {
   }
 }
 
+// ---------- 本地抽线：双边滤波 → Scharr → 非极大值抑制 → 滞后阈值(Canny) ----------
+// 全程不调模型、不花钱。目的是从照片里纯靠梯度找出「线条」，跟 AI 稿做对比。
+
+// 双边滤波：邻域加权 = 空域高斯 × 值域高斯。既压掉明暗纹理，又保住强边缘不糊。
+// sigmaS 越大越平滑；sigmaR 越大对灰度差越不敏感（保边变弱）。
+function bilateral(g, w, h, sigmaS, sigmaR) {
+  const out = new Float32Array(g.length);
+  const rS = Math.max(1, Math.round(2 * sigmaS));
+  const ss = 2 * sigmaS * sigmaS;
+  const sr = 2 * sigmaR * sigmaR;
+  const cs = new Float32Array(2 * rS + 1); // 空域核（可分离）
+  for (let d = -rS; d <= rS; d++) cs[d + rS] = Math.exp(-(d * d) / ss);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const center = g[y * w + x];
+      let sum = 0, wsum = 0;
+      for (let dy = -rS; dy <= rS; dy++) {
+        const yy = y + dy < 0 ? 0 : y + dy >= h ? h - 1 : y + dy;
+        const wy = cs[dy + rS];
+        const row = yy * w;
+        for (let dx = -rS; dx <= rS; dx++) {
+          const xx = x + dx < 0 ? 0 : x + dx >= w ? w - 1 : x + dx;
+          const v = g[row + xx];
+          const range = Math.exp(-((v - center) * (v - center)) / sr);
+          const ww = wy * cs[dx + rS] * range;
+          sum += ww * v;
+          wsum += ww;
+        }
+      }
+      out[y * w + x] = sum / wsum;
+    }
+  }
+  return out;
+}
+
+// Scharr 梯度：比 Sobel 旋转对称性更好，返回幅值 mag 和角度 ang（弧度）。
+function scharr(g, w, h) {
+  const mag = new Float32Array(g.length);
+  const ang = new Float32Array(g.length);
+  for (let y = 0; y < h; y++) {
+    const ym = (y > 0 ? y - 1 : 0) * w, yc = y * w, yp = (y < h - 1 ? y + 1 : h - 1) * w;
+    for (let x = 0; x < w; x++) {
+      const xm = x > 0 ? x - 1 : 0, xp = x < w - 1 ? x + 1 : w - 1;
+      const a = g[ym + xm], b = g[ym + x], c = g[ym + xp];
+      const d = g[yc + xm], f = g[yc + xp];
+      const p = g[yp + xm], q = g[yp + x], r = g[yp + xp];
+      const gx = 3 * (c + 2 * f + r - a - 2 * d - p);
+      const gy = 3 * (p + 2 * q + r - a - 2 * b - c);
+      const idx = yc + x;
+      mag[idx] = Math.sqrt(gx * gx + gy * gy) / 16;
+      ang[idx] = Math.atan2(gy, gx);
+    }
+  }
+  return { mag, ang };
+}
+
+// 非极大值抑制：沿梯度方向比较，只保留局部最强的脊点 → 边缘变细成 1px
+function nonMaxSuppress(mag, ang, w, h) {
+  const out = new Float32Array(mag.length);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = y * w + x;
+      const m = mag[idx];
+      const a = ang[idx];
+      // 梯度方向 -> 取法线两侧邻域（把 22.5° 分箱到 0/45/90/135）
+      const angle = (a * 180) / Math.PI;
+      let d1x, d1y, d2x, d2y;
+      const q = Math.round(angle / 45) * 45;
+      if (q === 0 || q === 180 || q === -180) { d1x = 1; d1y = 0; d2x = -1; d2y = 0; }
+      else if (q === 45 || q === -135) { d1x = 1; d1y = -1; d2x = -1; d2y = 1; }
+      else if (q === 90 || q === -90) { d1x = 0; d1y = -1; d2x = 0; d2y = 1; }
+      else { d1x = -1; d1y = -1; d2x = 1; d2y = 1; } // 135 / -45
+      const cx = x + d1x < 0 ? 0 : x + d1x >= w ? w - 1 : x + d1x;
+      const cy = y + d1y < 0 ? 0 : y + d1y >= h ? h - 1 : y + d1y;
+      const ox = x + d2x < 0 ? 0 : x + d2x >= w ? w - 1 : x + d2x;
+      const oy = y + d2y < 0 ? 0 : y + d2y >= h ? h - 1 : y + d2y;
+      out[idx] = (m >= mag[cy * w + cx] && m >= mag[oy * w + ox]) ? m : 0;
+    }
+  }
+  return out;
+}
+
+// 一幅图上算 Otsu 阈值（返回 0..255），用于自动定边缘强/弱阈值
+function otsuThreshold(g) {
+  const hist = new Int32Array(256);
+  for (let i = 0; i < g.length; i++) hist[Math.round(g[i]) > 255 ? 255 : g[i] < 0 ? 0 : Math.round(g[i])]++;
+  const total = g.length;
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sumB = 0, wB = 0, maxVar = -1, thresh = 0;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (wB === 0) continue;
+    const wF = total - wB;
+    if (wF === 0) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB, mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > maxVar) { maxVar = between; thresh = t; }
+  }
+  return thresh;
+}
+
+// 滞后双阈值 + 8 邻域连通（栈做 flood fill，避免递归爆栈）：
+// 强边缘留，弱边缘只有连到强边缘才留 → 抑制孤立杂点、留住连续淡线
+function hysteresis(nms, w, h, hi, lo) {
+  const out = new Uint8Array(nms.length); // 1=最终边缘
+  const stack = new Int32Array(nms.length);
+  let sp = 0;
+  for (let i = 0; i < nms.length; i++) {
+    if (nms[i] >= hi) { out[i] = 1; stack[sp++] = i; }
+    else out[i] = nms[i] >= lo ? 2 : 0; // 2=候选弱边缘
+  }
+  while (sp > 0) {
+    const i = stack[--sp];
+    const y = (i / w) | 0, x = i - y * w;
+    for (let dy = -1; dy <= 1; dy++) {
+      const yy = y + dy;
+      if (yy < 0 || yy >= h) continue;
+      for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx;
+        if (xx < 0 || xx >= w) continue;
+        const j = yy * w + xx;
+        if (out[j] === 2) { out[j] = 1; stack[sp++] = j; }
+      }
+    }
+  }
+  for (let i = 0; i < out.length; i++) out[i] = out[i] === 1 ? 1 : 0;
+  return out;
+}
+
+// 把二值边缘画成「暗线在亮底」的线稿 canvas；thicken = 膨胀次数（3×3 方核，每次加粗 1px）
+function edgesToCanvas(edge, w, h, thicken) {
+  let g = new Uint8ClampedArray(w * h);
+  for (let i = 0; i < g.length; i++) g[i] = edge[i] ? 0 : 255; // 1 → 黑线
+  for (let t = 0; t < thicken; t++) g = morphFilter(g, w, h, 'dilate');
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const id = ctx.createImageData(w, h);
+  writeGrayBack(id, g);
+  ctx.putImageData(id, 0, 0);
+  return canvas;
+}
+
+// 一键本地抽线，结果塞进 state.lineart（之后可照常叠格子、导出）
+function buildLocalLineart() {
+  const src = state.original;
+  if (!src) return null;
+  const { w, h } = dims(src);
+  const scale = Math.min(1, MAX_LOCAL_SIDE / Math.max(w, h));
+  const canvas = canvasOf(src, scale);
+  const ctx = canvas.getContext('2d');
+  const cw = canvas.width, ch = canvas.height;
+  const id = ctx.getImageData(0, 0, cw, ch);
+  let g = toGrayFloat(id);
+  const smooth = dom.extractSmooth.checked;
+  if (smooth) g = bilateral(g, cw, ch, 1.5, Number(dom.extractSigma.value)); // 压纹理、保强边
+  const { mag, ang } = scharr(g, cw, ch);       // 梯度幅值 + 方向
+  const nms = nonMaxSuppress(mag, ang, cw, ch); // 细化成 1px 脊线
+  let hi, lo, auto = 0;
+  if (dom.extractAuto.checked) {
+    auto = otsuThreshold(nms);
+    // Otsu 分的是「有脊线 / 无脊线」两类，直接当高阈会太狠、把柔和明暗边整条丢掉，
+    // 所以按 Canny 惯例降一档：高阈 = 0.6×Otsu，低阈 = 高阈的 40%
+    hi = Math.max(8, auto * 0.6);
+    lo = Math.max(3, hi * 0.4);
+  } else {
+    lo = Number(dom.extractLo.value);
+    hi = Math.max(lo + 2, Number(dom.extractHi.value));
+  }
+  const edge = hysteresis(nms, cw, ch, hi, lo);
+  const out = edgesToCanvas(edge, cw, ch, Number(dom.extractThick.value));
+  state.lineart = out;
+  state.lineartProc = null;
+  return { canvas: out, lo, hi, auto };
+}
+
 function upscaleCanvas(canvas, scale) {
   if (scale === 1) return canvas;
   const out = document.createElement('canvas');
   out.width = canvas.width * scale;
   out.height = canvas.height * scale;
-  const ctx = out.getContext('2d');
+  const ctx = out.getContext('2d', { willReadFrequently: true });
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(canvas, 0, 0, out.width, out.height);
@@ -564,7 +764,7 @@ async function convert() {
     state.lineartProc = null;
     dom.mode.value = 'lineart';
     setStatus(
-      `线稿已生成并存入线稿库（原始，未处理），用时 ${((Date.now() - started) / 1000).toFixed(1)} 秒。之后随时从第 6 组取用，本地处理不花钱。`,
+      `线稿已生成并存入线稿库（原始，未处理），用时 ${((Date.now() - started) / 1000).toFixed(1)} 秒。之后随时从第 7 组取用，本地处理不花钱。`,
       'ok'
     );
     render();
@@ -638,6 +838,53 @@ dom.convertBtn.addEventListener('click', convert);
 dom.resetPrompt.addEventListener('click', () => {
   dom.prompt.value = DEFAULT_PROMPT;
   dom.negativePrompt.value = DEFAULT_NEGATIVE;
+});
+
+dom.extractSigma.addEventListener('input', () => {
+  dom.extractSigmaValue.textContent = dom.extractSigma.value;
+});
+dom.extractLo.addEventListener('input', () => {
+  dom.extractLoValue.textContent = dom.extractLo.value;
+});
+dom.extractHi.addEventListener('input', () => {
+  dom.extractHiValue.textContent = dom.extractHi.value;
+});
+
+function syncExtractUi() {
+  const manual = !dom.extractAuto.checked;
+  dom.extractLo.disabled = !manual;
+  dom.extractHi.disabled = !manual;
+}
+dom.extractAuto.addEventListener('change', syncExtractUi);
+syncExtractUi();
+
+dom.extractBtn.addEventListener('click', () => {
+  if (!state.original) {
+    setStatus('本地抽线要有原图：先在 1. 里放一张图片', 'error');
+    return;
+  }
+  dom.extractBtn.disabled = true;
+  setStatus('本地抽线中…（Canny 边缘检测，不调模型、不花钱）');
+  setTimeout(() => {
+    try {
+      const r = buildLocalLineart();
+      if (!r) {
+        setStatus('本地抽线失败：没有原图', 'error');
+        return;
+      }
+      dom.mode.value = 'lineart';
+      render();
+      setStatus(
+        `本地抽线完成（${r.canvas.width}×${r.canvas.height}，低阈 ${r.lo.toFixed(0)} / 高阈 ${r.hi.toFixed(0)}${r.auto ? '，Otsu 自动' : ''}，免费）。` +
+        '导出后可和 AI 稿对比：本地法线条更碎、纹理杂线多，AI 稿会替你简化。',
+        'ok'
+      );
+    } catch (err) {
+      setStatus(`本地抽线出错：${err.message}`, 'error');
+    } finally {
+      dom.extractBtn.disabled = false;
+    }
+  }, 30);
 });
 
 for (const input of [dom.gridN, dom.showGrid, dom.showLabels, dom.gridColor, dom.gridWidth, dom.gridOpacity, dom.squareCells, dom.mode]) {
@@ -865,7 +1112,7 @@ async function loadFromGallery(it) {
     state.lineartProc = null;
     state.fileName = it.name || '线稿';
     dom.mode.value = 'lineart';
-    setStatus(`已从线稿库载入「${it.name || '未命名'}」，去第 3 组本地处理，不花钱。`, 'ok');
+    setStatus(`已从线稿库载入「${it.name || '未命名'}」，去第 4 组本地处理，不花钱。`, 'ok');
     render();
     closeGallery();
   } catch (err) {

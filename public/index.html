@@ -69,7 +69,7 @@
     </section>
 
     <section class="group">
-      <h2>2. 生成线稿 <span class="tag money">唯一花钱的一步</span></h2>
+      <h2>2. 生成线稿 <span class="tag money">AI · 唯一花钱的一步</span></h2>
       <label class="field">
         <span>提示词</span>
         <textarea id="prompt" rows="5"></textarea>
@@ -86,7 +86,40 @@
     </section>
 
     <section class="group">
-      <h2>3. 图像处理 <span class="tag free">本地 · 免费 · 可反复</span></h2>
+      <h2>3. 本地抽线 <span class="tag free">Canny · 免费</span></h2>
+      <p class="hint">不用 AI：双边滤波保边 → Scharr 梯度 → 非极大值抑制 → 双阈值滞后连通。只认像素突变，所以轮廓准、但内部明暗纹理会变成杂线；拿它跟第 2 组的 AI 稿对比看差别。</p>
+      <label class="check"><input id="extractSmooth" type="checkbox" checked /> 双边滤波预处理（压掉渐变纹理、保住强边缘）</label>
+      <label class="field small">
+        <span>值域 σ <b id="extractSigmaValue">18</b>（越大压得越狠，淡线也会被抹掉）</span>
+        <input id="extractSigma" type="range" min="4" max="60" step="2" value="18" />
+      </label>
+      <label class="check"><input id="extractAuto" type="checkbox" checked /> Otsu 自动定阈（类间方差最大化）</label>
+      <div class="row wrap">
+        <label class="field small">
+          <span>低阈 <b id="extractLoValue">30</b></span>
+          <input id="extractLo" type="range" min="5" max="120" step="5" value="30" />
+        </label>
+        <label class="field small">
+          <span>高阈 <b id="extractHiValue">75</b></span>
+          <input id="extractHi" type="range" min="10" max="200" step="5" value="75" />
+        </label>
+        <label class="field small">
+          <span>线宽</span>
+          <select id="extractThick">
+            <option value="0">1px（骨架，打印偏淡）</option>
+            <option value="1" selected>2px</option>
+            <option value="2">3px</option>
+            <option value="3">4px</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <button id="extractBtn" class="btn primary" type="button">本地提取线稿（不花钱）</button>
+      </div>
+    </section>
+
+    <section class="group">
+      <h2>4. 图像处理 <span class="tag free">本地 · 免费 · 可反复</span></h2>
       <p class="hint">下面全在浏览器本地跑，不调模型、不花钱。生成一次线稿后可反复调参、点「应用处理」。</p>
       <label class="field small">
         <span>空间卷积核（3×3）</span>
@@ -145,7 +178,7 @@
     </section>
 
     <section class="group">
-      <h2>4. 网格</h2>
+      <h2>5. 网格</h2>
       <label class="field">
         <span>显示内容</span>
         <select id="mode">
@@ -180,7 +213,7 @@
     </section>
 
     <section class="group">
-      <h2>5. 导出</h2>
+      <h2>6. 导出</h2>
       <div class="row wrap">
         <button id="exportGridOnly" class="btn primary" type="button">导出空白网格</button>
         <button id="exportLineart" class="btn" type="button">导出线稿</button>
@@ -191,7 +224,7 @@
     </section>
 
     <section class="group">
-      <h2>6. 线稿库 <span class="tag free">免费复用</span></h2>
+      <h2>7. 线稿库 <span class="tag free">免费复用</span></h2>
       <p class="hint">每次 AI 生成的原稿都自动存在这里，随时点开载入、本地处理，不再重复花钱。</p>
       <button id="openGallery" class="btn primary" type="button">打开线稿库（<span id="galleryCountSidebar">0</span>）</button>
     </section>
@@ -200,7 +233,7 @@
   <section class="stage">
     <div id="empty" class="empty">
       <p>先放一张图进来吧</p>
-      <p class="hint">没有 API key 也能用：把已有的线稿图拖进来，直接叠格子</p>
+      <p class="hint">没有 API key 也能用：拖一张图进去，用第 3 组「本地抽线」免费出线稿，或直接叠格子</p>
     </div>
     <div id="singleView" class="view" hidden>
       <canvas id="mainCanvas"></canvas>
