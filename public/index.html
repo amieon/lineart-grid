@@ -220,6 +220,7 @@
           <option value="lineart">线稿</option>
           <option value="original">原图</option>
           <option value="compare">左右对比</option>
+          <option value="overlay">叠加对比（临摹照片 vs 原图）</option>
         </select>
       </label>
       <label class="field">
@@ -248,7 +249,89 @@
     </section>
 
     <section class="group">
-      <h2>6. 导出</h2>
+      <h2>6. 叠加对比 <span class="tag free">看临摹准不准</span></h2>
+      <p class="hint">把你临摹的照片和原图（线稿）叠在一起看差多少。先提墨（本地免费，或花钱让 AI 提），白底变透明只留墨线；再点「自动匹配大小」粗对齐，然后拖动 / Ctrl+滚轮微调 —— 手机拍摄的远近和角度都不可能一样，所以缩放和旋转是必须的。</p>
+      <label class="field small">
+        <span>临摹照片（手机拍的）</span>
+        <input id="photoInput" type="file" accept="image/png,image/jpeg,image/webp,image/heic" />
+      </label>
+      <p id="photoInfo" class="hint"></p>
+      <label class="field small">
+        <span>提墨方式</span>
+        <select id="photoMethod">
+          <option value="local">本地（第 3 组的方法和参数 · 免费 · 可反复）</option>
+          <option value="ai">AI（qwen-image-edit · 花钱 · 按张计费）</option>
+          <option value="none">不提墨（直接用照片叠）</option>
+        </select>
+      </label>
+      <p class="hint" id="aiWarn" hidden>
+        AI 会「顺手美化」：可能把你抖的线画直、把断口接上，那对比就不准了 —— 提示词里已经写死「不许修正、不许补线」，但要最忠实还是用本地。
+        光照阴影太乱、本地提不干净时再上 AI。结果会自动存进线稿库（标「照片」），之后复用不再花钱。
+      </p>
+      <div class="row">
+        <button id="photoProcess" class="btn ghost" type="button">重跑提墨</button>
+        <button id="photoClear" class="btn ghost" type="button">清掉照片</button>
+      </div>
+      <label class="field small">
+        <span>叠加模式</span>
+        <select id="overlayMode">
+          <option value="alpha">半透明叠（两层各自上色，看整体偏移）</option>
+          <option value="diff">差值（重合=黑，偏一点就发亮，最客观）</option>
+          <option value="flash">闪烁切换（按住空格只看原图）</option>
+        </select>
+      </label>
+      <div class="row">
+        <label class="field small">
+          <span>原图色</span>
+          <input id="overlayRefColor" type="color" value="#e8433f" />
+        </label>
+        <label class="field small">
+          <span>照片色</span>
+          <input id="overlayPhotoColor" type="color" value="#111111" />
+        </label>
+        <label class="field small">
+          <span>照片不透明 <b id="overlayOpacityValue">60%</b></span>
+          <input id="overlayOpacity" type="range" min="5" max="100" step="5" value="60" />
+        </label>
+      </div>
+      <label class="field small">
+        <span>正在调哪一层</span>
+        <select id="overlaySel">
+          <option value="photo">照片层</option>
+          <option value="ref">原图层</option>
+        </select>
+      </label>
+      <p class="hint">在这个模式下：按住图拖动 = 平移选中的那一层，Ctrl+滚轮 = 缩放这一层。想平移视图就拖图外面的空白处，想缩放视图用上面的缩放条。</p>
+      <div class="row wrap">
+        <label class="field small">
+          <span>X <b id="tfXValue">0</b></span>
+          <input id="tfX" type="range" min="-1000" max="1000" step="1" value="0" />
+        </label>
+        <label class="field small">
+          <span>Y <b id="tfYValue">0</b></span>
+          <input id="tfY" type="range" min="-1000" max="1000" step="1" value="0" />
+        </label>
+        <label class="field small">
+          <span>缩放 <b id="tfScaleValue">1.00</b></span>
+          <input id="tfScale" type="range" min="0.05" max="5" step="0.005" value="1" />
+        </label>
+        <label class="field small">
+          <span>旋转 <b id="tfRotValue">0.0</b>°</span>
+          <input id="tfRot" type="range" min="-180" max="180" step="0.5" value="0" />
+        </label>
+      </div>
+      <div class="row wrap">
+        <button id="tfMatch" class="btn" type="button">自动匹配大小</button>
+        <button id="tfReset" class="btn ghost" type="button">归零本层</button>
+        <button id="tfResetAll" class="btn ghost" type="button">两层都归零</button>
+        <button id="exportOverlay" class="btn primary" type="button">导出对比图</button>
+      </div>
+      <p class="hint">「自动匹配大小」按两层墨迹的包围盒算：把选中层缩放到和另一层一样大并对齐中心。相机远近造成的大小差一步补上，剩下只需微调旋转和位置。</p>
+      <p class="hint">差值模式是黑底：两层完全一样的地方（包括白纸）都变黑，画偏了的地方发亮 —— 亮斑集中在哪，那笔就不准。</p>
+    </section>
+
+    <section class="group">
+      <h2>7. 导出</h2>
       <div class="row wrap">
         <button id="exportGridOnly" class="btn primary" type="button">导出空白网格</button>
         <button id="exportLineart" class="btn" type="button">导出线稿</button>
@@ -259,7 +342,7 @@
     </section>
 
     <section class="group">
-      <h2>7. 线稿库 <span class="tag free">免费复用</span></h2>
+      <h2>8. 线稿库 <span class="tag free">免费复用</span></h2>
       <p class="hint">每次 AI 生成的原稿都自动存在这里，随时点开载入、本地处理，不再重复花钱。</p>
       <button id="openGallery" class="btn primary" type="button">打开线稿库（<span id="galleryCountSidebar">0</span>）</button>
     </section>

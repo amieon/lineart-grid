@@ -88,7 +88,8 @@ function makeId() {
 }
 
 // 把一张线稿存进库：写 PNG 文件 + 追加元数据，返回该条记录
-function saveLineart({ buffer, mime, name, prompt, model }) {
+// kind='photo' 表示这是「临摹照片提墨」的结果，载入时要回到照片层而不是参考层
+function saveLineart({ buffer, mime, name, prompt, model, kind }) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const id = makeId();
   const file = `${id}.${mime === 'image/jpeg' ? 'jpg' : 'png'}`;
@@ -101,6 +102,7 @@ function saveLineart({ buffer, mime, name, prompt, model }) {
     createdAt: new Date().toISOString(),
     model: model || '',
     prompt: prompt || '',
+    kind: kind === 'photo' ? 'photo' : 'lineart',
   };
   const items = readIndex();
   items.unshift(item);
@@ -354,6 +356,7 @@ const server = http.createServer(async (req, res) => {
             name: typeof payload?.fileName === 'string' ? payload.fileName : '',
             prompt: prompt.trim(),
             model: CONFIG.model,
+            kind: payload?.kind === 'photo' ? 'photo' : 'lineart',
           });
           galleryId = item.id;
         }

@@ -210,6 +210,9 @@ textarea:focus, select:focus { outline: 1px solid var(--accent); }
 }
 .viewport.grabbing { cursor: grabbing; user-select: none; }
 .viewport > .empty { padding: 16vh 0; }
+/* 叠加对比：拖画布是挪图层，光标跟「拖空白处平移视图」区分开 */
+.viewport.overlay #mainCanvas { cursor: move; }
+#mainCanvas.dragging { cursor: grabbing; }
 
 .empty { color: var(--muted); text-align: center; }
 .empty p:first-child { font-size: 16px; color: var(--text); }
