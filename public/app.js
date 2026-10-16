@@ -18,6 +18,8 @@ const MAX_LOCAL_SIDE = 1600;
 
 const el = (id) => document.getElementById(id);
 const dom = {
+  tabs: el('tabs'),
+  panel: document.querySelector('.panel'),
   dropzone: el('dropzone'),
   fileInput: el('fileInput'),
   fileInfo: el('fileInfo'),
@@ -126,7 +128,6 @@ const dom = {
   galleryGrid: el('galleryGrid'),
   galleryCount: el('galleryCount'),
   galleryCountSidebar: el('galleryCountSidebar'),
-  openGallery: el('openGallery'),
   galleryBack: el('galleryBack'),
   saveToGallery: el('saveToGallery'),
   galleryRefresh: el('galleryRefresh'),
@@ -136,6 +137,7 @@ const dom = {
 const newTransform = () => ({ x: 0, y: 0, scale: 1, rot: 0 });
 
 const state = {
+  tab: 'convert', // 顶部功能页：convert 转线稿 / compare 叠加对比（线稿库是盖上来的整页，不算一档）
   original: null,
   lineart: null,
   lineartProc: null,
@@ -650,7 +652,7 @@ function readExtractOpts() {
   };
 }
 
-// 纯函数：任意图 → 线稿 canvas。第 3 组（原图抽线）和第 6 组（临摹照片提墨）共用。
+// 纯函数：任意图 → 线稿 canvas。「本地抽线」（原图）和「叠加对比」（临摹照片提墨）两条路共用。
 // 里面不许碰 state，否则两条路会互相覆盖对方的结果。
 function extractInk(src, o) {
   const { w, h } = dims(src);
@@ -734,7 +736,7 @@ function photoUploadUrl(img) {
   return canvas.toDataURL('image/jpeg', 0.92);
 }
 
-// 第 6 组唯一花钱的一步：按张计费，所以必须显式点按钮，且结果自动入库供复用
+// 叠加对比这一页唯一花钱的一步：按张计费，所以必须显式点按钮，且结果自动入库供复用
 async function aiExtractPhoto() {
   if (!state.photo) {
     setStatus('还没有临摹照片，先在上面选一张。', 'error');
@@ -1399,7 +1401,7 @@ async function convert() {
     state.lineartProc = null;
     dom.mode.value = 'lineart';
     setStatus(
-      `线稿已生成并存入线稿库（原始，未处理），用时 ${((Date.now() - started) / 1000).toFixed(1)} 秒。之后随时从第 8 组取用，本地处理不花钱。`,
+      `线稿已生成并存入线稿库（原始，未处理），用时 ${((Date.now() - started) / 1000).toFixed(1)} 秒。之后随时在顶上「线稿库」取用，本地处理不花钱。`,
       'ok'
     );
     render();
@@ -1589,7 +1591,7 @@ dom.resetProc.addEventListener('click', () => {
   setStatus('已清除处理结果，显示未处理的原始线稿。', 'ok');
 });
 
-// ---------- 第 6 组：叠加对比（临摹照片 vs 原图） ----------
+// ---------- 叠加对比（临摹照片 vs 原图） ----------
 function syncTfUi() {
   const tf = state.tf[dom.overlaySel.value] || state.tf.photo;
   const ref = overlayRefImg();
@@ -1743,7 +1745,7 @@ dom.photoClear.addEventListener('click', () => {
 dom.exportOverlay.addEventListener('click', () => {
   const cv = buildOverlayCanvas();
   if (!cv) {
-    setStatus('还没有可导出的对比图：需要原图（第 2 组生成，或第 8 组线稿库载入）+ 临摹照片。', 'error');
+    setStatus('还没有可导出的对比图：需要原图（「转线稿」页生成，或从「线稿库」载入）+ 临摹照片。', 'error');
     return;
   }
   const settings = readSettings();
@@ -1945,13 +1947,45 @@ function renderGallery(items) {
   }
 }
 
+// ---------- 顶部功能页 ----------
+// 侧栏八组全堆成一列太长、切功能要一直滚，所以按用途分页显示。
+// 分组用 data-tab 声明自己上哪几页（「本地抽线」「网格」两页都要，所以写两个词）；
+// data-only 标的是只在某页出现的说明或按钮。线稿库本身是整页覆盖，不占侧栏。
+function applyTab(name) {
+  for (const g of dom.panel.querySelectorAll('.group[data-tab]')) {
+    g.hidden = !g.dataset.tab.split(' ').includes(name);
+  }
+  for (const e of dom.panel.querySelectorAll('[data-only]')) {
+    e.hidden = !e.dataset.only.split(' ').includes(name);
+  }
+  for (const b of dom.tabs.children) b.classList.toggle('active', b.dataset.tab === name);
+}
+
+function setTab(name) {
+  if (name === 'gallery') {
+    openGalleryPage();
+    return;
+  }
+  state.tab = name;
+  applyTab(name);
+  // 舞台跟着切到这一页的主角；切回转线稿时别停在 overlay，否则看不到东西
+  if (name === 'compare') dom.mode.value = 'overlay';
+  else if (dom.mode.value === 'overlay') dom.mode.value = 'lineart';
+  render();
+  if (name === 'compare' && !lineartImg()) {
+    setStatus('叠加对比要有一张参考原图：去「转线稿」页生成（或用「本地抽线」免费出），也可以从顶上「线稿库」直接载入。', 'error');
+  }
+}
+
 function openGalleryPage() {
   dom.galleryPage.hidden = false;
+  for (const b of dom.tabs.children) b.classList.toggle('active', b.dataset.tab === 'gallery');
   refreshGallery();
 }
 
 function closeGallery() {
   dom.galleryPage.hidden = true;
+  applyTab(state.tab); // 高亮回到之前那一页
 }
 
 async function refreshGallery() {
@@ -1967,6 +2001,8 @@ async function refreshGallery() {
 async function loadFromGallery(it) {
   try {
     const img = await loadImage(`/api/gallery/${it.id}`);
+    let tab;
+    let msg;
     if (it.kind === 'photo') {
       // 花钱提过的临摹稿要回到照片层，盖到 state.lineart 上会把参考原图毁掉
       state.photoLine = img;
@@ -1975,17 +2011,19 @@ async function loadFromGallery(it) {
       dom.photoMethod.value = 'ai';
       updatePhotoUi();
       refreshPhotoInfo('从线稿库载入，没花钱');
-      dom.mode.value = 'overlay';
-      setStatus(`已把「${it.name || '未命名'}」载入到照片层（没花钱）。原照片不在库里，所以只能叠着用、不能再本地重提。`, 'ok');
+      tab = 'compare';
+      msg = `已把「${it.name || '未命名'}」载入到照片层（没花钱）。原照片不在库里，只能叠着用、不能再本地重提。` +
+        (lineartImg() ? '' : ' 还缺参考原图：去「转线稿」页生成，或再从库里载入一张。');
     } else {
       state.lineart = img;
       state.lineartProc = null;
       state.fileName = it.name || '线稿';
-      dom.mode.value = 'lineart';
-      setStatus(`已从线稿库载入「${it.name || '未命名'}」，去第 4 组本地处理，不花钱。`, 'ok');
+      tab = 'convert';
+      msg = `已从线稿库载入「${it.name || '未命名'}」，「图像处理」那组随你本地调，不花钱。`;
     }
-    render();
     closeGallery();
+    setTab(tab); // 载的是什么就切到哪一页，否则对比稿载入了、对比那组却藏着
+    setStatus(msg, 'ok');
   } catch (err) {
     galleryMsg(`载入失败：${err.message}`, 'error');
   }
@@ -2036,6 +2074,10 @@ async function saveCurrentToGallery() {
 
 dom.saveToGallery.addEventListener('click', saveCurrentToGallery);
 dom.galleryRefresh.addEventListener('click', refreshGallery);
-dom.openGallery.addEventListener('click', openGalleryPage);
 dom.galleryBack.addEventListener('click', closeGallery);
+dom.tabs.addEventListener('click', (e) => {
+  const b = e.target.closest('.tab');
+  if (b) setTab(b.dataset.tab);
+});
+applyTab(state.tab); // 初始只显示「转线稿」那一页的分组
 refreshGallery();

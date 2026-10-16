@@ -6,11 +6,18 @@
 <title>线稿临摹网格工具</title>
 <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+<body data-tab="convert">
 <header class="topbar">
   <h1>线稿临摹网格工具</h1>
   <p class="subtitle">图片 → Qwen 转黑白线稿 → 叠 n×n 方格练型准</p>
   <span id="modelBadge" class="badge" role="button" tabindex="0" title="点击配置 API Key 和模型">未连接</span>
+  <nav class="tabs" id="tabs" role="tablist" aria-label="功能">
+    <button class="tab active" type="button" role="tab" data-tab="convert">转线稿</button>
+    <button class="tab" type="button" role="tab" data-tab="compare">叠加对比</button>
+    <button class="tab" type="button" role="tab" data-tab="gallery">
+      线稿库 <span id="galleryCountSidebar" class="tab-count">0</span>
+    </button>
+  </nav>
 </header>
 
 <div id="configModal" class="modal" hidden>
@@ -58,8 +65,8 @@
 
 <main class="layout">
   <aside class="panel">
-    <section class="group">
-      <h2>1. 图片</h2>
+    <section class="group" data-tab="convert">
+      <h2>图片</h2>
       <div id="dropzone" class="dropzone">
         <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/bmp" hidden />
         <p><strong>点击选择</strong> 或把图片拖进来</p>
@@ -68,8 +75,8 @@
       <p id="fileInfo" class="hint"></p>
     </section>
 
-    <section class="group">
-      <h2>2. 生成线稿 <span class="tag money">AI · 唯一花钱的一步</span></h2>
+    <section class="group" data-tab="convert">
+      <h2>生成线稿 <span class="tag money">AI · 按张计费</span></h2>
       <label class="field">
         <span>提示词</span>
         <textarea id="prompt" rows="5"></textarea>
@@ -82,175 +89,11 @@
         <button id="resetPrompt" class="btn ghost" type="button">恢复默认提示词</button>
         <button id="convertBtn" class="btn primary" type="button">生成线稿</button>
       </div>
-      <p id="status" class="hint status"></p>
     </section>
 
-    <section class="group">
-      <h2>3. 本地抽线 <span class="tag free">免费 · 可反复</span></h2>
-      <p class="hint">不用 AI，全程在浏览器本地跑。手绘 / 纸扫描线选「提墨」，照片选「边缘」。</p>
-      <label class="field small">
-        <span>方法</span>
-        <select id="extractMethod">
-          <option value="sauvola">自适应阈值提墨（Sauvola）— 手绘线稿首选</option>
-          <option value="canny">边缘检测（Canny）— 照片、明暗渐变</option>
-        </select>
-      </label>
-
-      <div id="sauvolaOpts">
-        <p class="hint">比局部背景「明显更黑」的像素算墨，整条笔画连成实心一块，所以不会像边缘检测那样把一条软线裂成两条描边。阈值 t = mean·(1 + k·(std/R − 1))，mean/std 用积分图 O(1) 取窗。</p>
-        <label class="field small">
-          <span>局部窗口半径 <b id="extractRadiusValue">15</b>（窗口 2r+1，要大于笔宽）</span>
-          <input id="extractRadius" type="range" min="3" max="40" step="1" value="15" />
-        </label>
-        <label class="field small">
-          <span>严格度 k <b id="extractKValue">0.20</b>（越大越挑剔：只留浓墨；接近 0 时纸面明暗不匀会连成一片）</span>
-          <input id="extractK" type="range" min="0.05" max="0.5" step="0.01" value="0.2" />
-        </label>
-        <label class="check"><input id="extractSkeleton" type="checkbox" checked /> 骨架化（Zhang-Suen：把实心笔画收成居中线，治双线）</label>
-      </div>
-
-      <div id="cannyOpts" hidden>
-        <p class="hint">双边滤波保边 → Scharr 梯度 → 非极大值抑制 → 双阈值滞后连通。它只认像素突变、不会替你简化，所以纹理会变成碎线黑点，靠「最短笔画」和「值域 σ」压。</p>
-        <label class="check"><input id="extractSmooth" type="checkbox" checked /> 双边滤波预处理（压掉渐变纹理、保住强边缘）</label>
-        <label class="field small">
-          <span>值域 σ <b id="extractSigmaValue">26</b>（越大压得越狠，淡线也会被抹掉）</span>
-          <input id="extractSigma" type="range" min="4" max="60" step="2" value="26" />
-        </label>
-        <label class="check"><input id="extractAuto" type="checkbox" checked /> Otsu 自动定阈（类间方差最大化）</label>
-        <div class="row wrap">
-          <label class="field small">
-            <span>低阈 <b id="extractLoValue">30</b></span>
-            <input id="extractLo" type="range" min="5" max="120" step="5" value="30" />
-          </label>
-          <label class="field small">
-            <span>高阈 <b id="extractHiValue">75</b></span>
-            <input id="extractHi" type="range" min="10" max="200" step="5" value="75" />
-          </label>
-        </div>
-      </div>
-
-      <label class="field small">
-        <span>最短笔画 <b id="extractMinLenValue">60</b> px（小于这个长度的连通块直接丢 —— 治黑点 / 纸屑）</span>
-        <input id="extractMinLen" type="range" min="1" max="400" step="1" value="60" />
-      </label>
-      <div class="row">
-        <label class="field small">
-          <span>线宽</span>
-          <select id="extractThick">
-            <option value="0">1px（骨架，打印偏淡）</option>
-            <option value="1" selected>2px</option>
-            <option value="2">3px</option>
-            <option value="3">4px</option>
-          </select>
-        </label>
-      </div>
-      <div class="row">
-        <button id="extractBtn" class="btn primary" type="button">本地提取线稿（不花钱）</button>
-      </div>
-    </section>
-
-    <section class="group">
-      <h2>4. 图像处理 <span class="tag free">本地 · 免费 · 可反复</span></h2>
-      <p class="hint">下面全在浏览器本地跑，不调模型、不花钱。生成一次线稿后可反复调参、点「应用处理」。</p>
-      <label class="field small">
-        <span>空间卷积核（3×3）</span>
-        <select id="convKernel">
-          <option value="none">无</option>
-          <option value="gaussian">高斯模糊（线性平滑·会糊边）</option>
-          <option value="box">均值滤波（线性平滑）</option>
-          <option value="sharpen">锐化核（中心 5，边缘增强）</option>
-          <option value="laplacian">拉普拉斯（二阶导边缘图）</option>
-          <option value="sobel">Sobel（一阶梯度边缘图）</option>
-        </select>
-      </label>
-      <label class="check"><input id="trim" type="checkbox" /> 自动裁掉四周空白（治模型爱加的大白边）</label>
-      <label class="field small">
-        <span>留白容差 <b id="trimValue">12</b>（越大裁得越狠）</span>
-        <input id="trimTol" type="range" min="2" max="60" step="2" value="12" />
-      </label>
-      <div class="row wrap">
-        <label class="check"><input id="denoise" type="checkbox" checked /> 中值去噪</label>
-        <label class="field small">
-          <span>核</span>
-          <select id="medianK">
-            <option value="3">3×3</option>
-            <option value="5">5×5</option>
-          </select>
-        </label>
-      </div>
-      <label class="check"><input id="binarize" type="checkbox" checked /> 色阶二值化（拉黑边缘）</label>
-      <label class="field small">
-        <span>二值化阈值 <b id="sharpenValue">140</b>（越大保留越多淡线）</span>
-        <input id="sharpenThreshold" type="range" min="60" max="220" step="5" value="140" />
-      </label>
-      <div class="row wrap">
-        <label class="field small">
-          <span>形态学</span>
-          <select id="morph">
-            <option value="none">无</option>
-            <option value="dilate">膨胀（加粗 / 连断线）</option>
-            <option value="erode">腐蚀（变细 / 去杂点）</option>
-            <option value="open">开运算（先腐蚀后膨胀，去黑杂点）</option>
-            <option value="close">闭运算（先膨胀后腐蚀，填黑线里的白洞）</option>
-          </select>
-        </label>
-        <label class="field small">
-          <span>次数 <b id="morphIterValue">1</b>（=结构元半径，每次 1px；填宽 d px 的白洞要 ⌈d/2⌉ 次）</span>
-          <input id="morphIter" type="range" min="1" max="8" step="1" value="1" />
-        </label>
-        <label class="field small">
-          <span>放大</span>
-          <select id="upscale">
-            <option value="1">原始</option>
-            <option value="2">2×（打印更锐）</option>
-          </select>
-        </label>
-      </div>
-      <div class="row">
-        <button id="resetProc" class="btn ghost" type="button">清除处理（看原图）</button>
-        <button id="processBtn" class="btn primary" type="button">应用处理</button>
-      </div>
-    </section>
-
-    <section class="group">
-      <h2>5. 网格</h2>
-      <label class="field">
-        <span>显示内容</span>
-        <select id="mode">
-          <option value="lineart">线稿</option>
-          <option value="original">原图</option>
-          <option value="compare">左右对比</option>
-          <option value="overlay">叠加对比（临摹照片 vs 原图）</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>格数 n × n：<b id="nValue">4</b></span>
-        <input id="gridN" type="range" min="2" max="20" step="1" value="4" />
-      </label>
-      <div class="row">
-        <label class="check"><input id="showGrid" type="checkbox" checked /> 显示网格</label>
-        <label class="check"><input id="showLabels" type="checkbox" /> 显示格号</label>
-      </div>
-      <div class="row">
-        <label class="field small">
-          <span>线色</span>
-          <input id="gridColor" type="color" value="#e8433f" />
-        </label>
-        <label class="field small">
-          <span>粗细 <b id="widthValue">1.5</b></span>
-          <input id="gridWidth" type="range" min="0.5" max="6" step="0.5" value="1.5" />
-        </label>
-        <label class="field small">
-          <span>不透明 <b id="opacityValue">90%</b></span>
-          <input id="gridOpacity" type="range" min="10" max="100" step="5" value="90" />
-        </label>
-      </div>
-      <label class="check"><input id="squareCells" type="checkbox" /> 强制正方形格（裁掉多余部分）</label>
-    </section>
-
-    <section class="group">
-      <h2>6. 叠加对比 <span class="tag free">看临摹准不准</span></h2>
-      <p class="hint">把你临摹的照片和原图（线稿）叠在一起看差多少。先提墨（本地免费，或花钱让 AI 提），白底变透明只留墨线；再点「自动匹配大小」粗对齐，然后拖动 / Ctrl+滚轮微调 —— 手机拍摄的远近和角度都不可能一样，所以缩放和旋转是必须的。</p>
+    <section class="group" data-tab="compare">
+      <h2>叠加对比 <span class="tag free">看临摹准不准</span></h2>
+      <p class="hint">把你临摹的照片和原图（线稿）叠在一起看差多少。参考原图在「转线稿」页生成，或从顶上「线稿库」载入。先提墨（本地免费，或花钱让 AI 提），白底变透明只留墨线；再点「自动匹配大小」粗对齐，然后拖动 / Ctrl+滚轮微调 —— 手机拍摄的远近和角度都不可能一样，所以缩放和旋转是必须的。</p>
       <label class="field small">
         <span>临摹照片（手机拍的）</span>
         <input id="photoInput" type="file" accept="image/png,image/jpeg,image/webp,image/heic" />
@@ -259,7 +102,7 @@
       <label class="field small">
         <span>提墨方式</span>
         <select id="photoMethod">
-          <option value="local">本地（第 3 组的方法和参数 · 免费 · 可反复）</option>
+          <option value="local">本地（下面「本地抽线」那组的方法与参数 · 免费 · 可反复）</option>
           <option value="ai">AI（qwen-image-edit · 花钱 · 按张计费）</option>
           <option value="none">不提墨（直接用照片叠）</option>
         </select>
@@ -330,8 +173,172 @@
       <p class="hint">差值模式是黑底：两层完全一样的地方（包括白纸）都变黑，画偏了的地方发亮 —— 亮斑集中在哪，那笔就不准。</p>
     </section>
 
-    <section class="group">
-      <h2>7. 导出</h2>
+    <section class="group" data-tab="convert compare">
+      <h2>本地抽线 <span class="tag free">免费 · 可反复</span></h2>
+      <p class="hint">不用 AI，全程在浏览器本地跑。手绘 / 纸扫描线选「提墨」，照片选「边缘」。</p>
+      <p class="hint" data-only="compare">这组就是上面「提墨方式：本地」用到的参数，改完回上面点「重跑提墨」。</p>
+      <label class="field small">
+        <span>方法</span>
+        <select id="extractMethod">
+          <option value="sauvola">自适应阈值提墨（Sauvola）— 手绘线稿首选</option>
+          <option value="canny">边缘检测（Canny）— 照片、明暗渐变</option>
+        </select>
+      </label>
+
+      <div id="sauvolaOpts">
+        <p class="hint">比局部背景「明显更黑」的像素算墨，整条笔画连成实心一块，所以不会像边缘检测那样把一条软线裂成两条描边。阈值 t = mean·(1 + k·(std/R − 1))，mean/std 用积分图 O(1) 取窗。</p>
+        <label class="field small">
+          <span>局部窗口半径 <b id="extractRadiusValue">15</b>（窗口 2r+1，要大于笔宽）</span>
+          <input id="extractRadius" type="range" min="3" max="40" step="1" value="15" />
+        </label>
+        <label class="field small">
+          <span>严格度 k <b id="extractKValue">0.20</b>（越大越挑剔：只留浓墨；接近 0 时纸面明暗不匀会连成一片）</span>
+          <input id="extractK" type="range" min="0.05" max="0.5" step="0.01" value="0.2" />
+        </label>
+        <label class="check"><input id="extractSkeleton" type="checkbox" checked /> 骨架化（Zhang-Suen：把实心笔画收成居中线，治双线）</label>
+      </div>
+
+      <div id="cannyOpts" hidden>
+        <p class="hint">双边滤波保边 → Scharr 梯度 → 非极大值抑制 → 双阈值滞后连通。它只认像素突变、不会替你简化，所以纹理会变成碎线黑点，靠「最短笔画」和「值域 σ」压。</p>
+        <label class="check"><input id="extractSmooth" type="checkbox" checked /> 双边滤波预处理（压掉渐变纹理、保住强边缘）</label>
+        <label class="field small">
+          <span>值域 σ <b id="extractSigmaValue">26</b>（越大压得越狠，淡线也会被抹掉）</span>
+          <input id="extractSigma" type="range" min="4" max="60" step="2" value="26" />
+        </label>
+        <label class="check"><input id="extractAuto" type="checkbox" checked /> Otsu 自动定阈（类间方差最大化）</label>
+        <div class="row wrap">
+          <label class="field small">
+            <span>低阈 <b id="extractLoValue">30</b></span>
+            <input id="extractLo" type="range" min="5" max="120" step="5" value="30" />
+          </label>
+          <label class="field small">
+            <span>高阈 <b id="extractHiValue">75</b></span>
+            <input id="extractHi" type="range" min="10" max="200" step="5" value="75" />
+          </label>
+        </div>
+      </div>
+
+      <label class="field small">
+        <span>最短笔画 <b id="extractMinLenValue">60</b> px（小于这个长度的连通块直接丢 —— 治黑点 / 纸屑）</span>
+        <input id="extractMinLen" type="range" min="1" max="400" step="1" value="60" />
+      </label>
+      <div class="row">
+        <label class="field small">
+          <span>线宽</span>
+          <select id="extractThick">
+            <option value="0">1px（骨架，打印偏淡）</option>
+            <option value="1" selected>2px</option>
+            <option value="2">3px</option>
+            <option value="3">4px</option>
+          </select>
+        </label>
+      </div>
+      <div class="row" data-only="convert">
+        <button id="extractBtn" class="btn primary" type="button">本地提取线稿（不花钱）</button>
+      </div>
+    </section>
+
+    <section class="group" data-tab="convert">
+      <h2>图像处理 <span class="tag free">本地 · 免费 · 可反复</span></h2>
+      <p class="hint">下面全在浏览器本地跑，不调模型、不花钱。生成一次线稿后可反复调参、点「应用处理」。</p>
+      <label class="field small">
+        <span>空间卷积核（3×3）</span>
+        <select id="convKernel">
+          <option value="none">无</option>
+          <option value="gaussian">高斯模糊（线性平滑·会糊边）</option>
+          <option value="box">均值滤波（线性平滑）</option>
+          <option value="sharpen">锐化核（中心 5，边缘增强）</option>
+          <option value="laplacian">拉普拉斯（二阶导边缘图）</option>
+          <option value="sobel">Sobel（一阶梯度边缘图）</option>
+        </select>
+      </label>
+      <label class="check"><input id="trim" type="checkbox" /> 自动裁掉四周空白（治模型爱加的大白边）</label>
+      <label class="field small">
+        <span>留白容差 <b id="trimValue">12</b>（越大裁得越狠）</span>
+        <input id="trimTol" type="range" min="2" max="60" step="2" value="12" />
+      </label>
+      <div class="row wrap">
+        <label class="check"><input id="denoise" type="checkbox" checked /> 中值去噪</label>
+        <label class="field small">
+          <span>核</span>
+          <select id="medianK">
+            <option value="3">3×3</option>
+            <option value="5">5×5</option>
+          </select>
+        </label>
+      </div>
+      <label class="check"><input id="binarize" type="checkbox" checked /> 色阶二值化（拉黑边缘）</label>
+      <label class="field small">
+        <span>二值化阈值 <b id="sharpenValue">140</b>（越大保留越多淡线）</span>
+        <input id="sharpenThreshold" type="range" min="60" max="220" step="5" value="140" />
+      </label>
+      <div class="row wrap">
+        <label class="field small">
+          <span>形态学</span>
+          <select id="morph">
+            <option value="none">无</option>
+            <option value="dilate">膨胀（加粗 / 连断线）</option>
+            <option value="erode">腐蚀（变细 / 去杂点）</option>
+            <option value="open">开运算（先腐蚀后膨胀，去黑杂点）</option>
+            <option value="close">闭运算（先膨胀后腐蚀，填黑线里的白洞）</option>
+          </select>
+        </label>
+        <label class="field small">
+          <span>次数 <b id="morphIterValue">1</b>（=结构元半径，每次 1px；填宽 d px 的白洞要 ⌈d/2⌉ 次）</span>
+          <input id="morphIter" type="range" min="1" max="8" step="1" value="1" />
+        </label>
+        <label class="field small">
+          <span>放大</span>
+          <select id="upscale">
+            <option value="1">原始</option>
+            <option value="2">2×（打印更锐）</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <button id="resetProc" class="btn ghost" type="button">清除处理（看原图）</button>
+        <button id="processBtn" class="btn primary" type="button">应用处理</button>
+      </div>
+    </section>
+
+    <section class="group" data-tab="convert compare">
+      <h2>网格</h2>
+      <label class="field">
+        <span>显示内容</span>
+        <select id="mode">
+          <option value="lineart">线稿</option>
+          <option value="original">原图</option>
+          <option value="compare">左右对比</option>
+          <option value="overlay">叠加对比（临摹照片 vs 原图）</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>格数 n × n：<b id="nValue">4</b></span>
+        <input id="gridN" type="range" min="2" max="20" step="1" value="4" />
+      </label>
+      <div class="row">
+        <label class="check"><input id="showGrid" type="checkbox" checked /> 显示网格</label>
+        <label class="check"><input id="showLabels" type="checkbox" /> 显示格号</label>
+      </div>
+      <div class="row">
+        <label class="field small">
+          <span>线色</span>
+          <input id="gridColor" type="color" value="#e8433f" />
+        </label>
+        <label class="field small">
+          <span>粗细 <b id="widthValue">1.5</b></span>
+          <input id="gridWidth" type="range" min="0.5" max="6" step="0.5" value="1.5" />
+        </label>
+        <label class="field small">
+          <span>不透明 <b id="opacityValue">90%</b></span>
+          <input id="gridOpacity" type="range" min="10" max="100" step="5" value="90" />
+        </label>
+      </div>
+      <label class="check"><input id="squareCells" type="checkbox" /> 强制正方形格（裁掉多余部分）</label>
+    </section>
+
+    <section class="group" data-tab="convert">
+      <h2>导出</h2>
       <div class="row wrap">
         <button id="exportGridOnly" class="btn primary" type="button">导出空白网格</button>
         <button id="exportLineart" class="btn" type="button">导出线稿</button>
@@ -341,11 +348,8 @@
       <p class="hint">导出为 PNG，尺寸与原图一致，可直接打印。空白网格是透明背景，只有格线和格号，方便垫在纸下或叠在别的图上临摹。</p>
     </section>
 
-    <section class="group">
-      <h2>8. 线稿库 <span class="tag free">免费复用</span></h2>
-      <p class="hint">每次 AI 生成的原稿都自动存在这里，随时点开载入、本地处理，不再重复花钱。</p>
-      <button id="openGallery" class="btn primary" type="button">打开线稿库（<span id="galleryCountSidebar">0</span>）</button>
-    </section>
+    <!-- 状态条放在所有分组之外：三个功能页都要用它说话，塞进某一组里切页就看不见了 -->
+    <p id="status" class="hint status panel-status"></p>
   </aside>
 
   <section class="stage">
@@ -360,7 +364,7 @@
     <div id="viewport" class="viewport">
       <div id="empty" class="empty">
         <p>先放一张图进来吧</p>
-        <p class="hint">没有 API key 也能用：拖一张图进去，用第 3 组「本地抽线」免费出线稿，或直接叠格子</p>
+        <p class="hint">没有 API key 也能用：拖一张图进去，用「本地抽线」免费出线稿，或直接叠格子</p>
       </div>
       <div id="singleView" class="view" hidden>
         <canvas id="mainCanvas"></canvas>
